@@ -1,4 +1,10 @@
 ---
+#################### TEST EXECUTION CONTROL VARIABLES ####################
+run_core_services_verification: false
+run_network_benchmark: false
+
+
+#################### TEST CONFIGURATION VARIABLES ####################
 # Do we want check connection to the test VM? network might be blocked from FE
 test_vm_check_connection: false
 
@@ -20,6 +26,8 @@ test_gw: '10.0.0.1'
 
 # Marketplace App name for test VM instantiation
 test_vm_name: 'Alpine Linux 3.21'
+test_vm_template_extra: |
+  MEMORY="512"
 
 # PArameters for iperf network benchmarking
 iperf:

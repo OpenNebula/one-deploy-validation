@@ -335,6 +335,17 @@
     vm_template_id: "{{ new_vm_template_id if not new_vm_template_id.skipped|default(false) else existing_vm_template_id }}"
   failed_when: new_vm_template_id.skipped|default(false) and existing_vm_template_id.skipped|default(false)
 
+- name: Write extra template variables to a temporary file on the remote host
+  ansible.builtin.copy:
+    content: "{{ test_vm_template_extra }}"
+    dest: "/tmp/test_vm_template_extra.txt"
+
+- name: Update VM template with extra data
+  ansible.builtin.shell: >
+    onetemplate update --append {{ vm_template_id.stdout }} /tmp/test_vm_template_extra.txt
+  register: update_vm_template_extra
+  failed_when: update_vm_template_extra.rc != 0
+
 - name: Get VM template as JSON
   ansible.builtin.shell: >
     onetemplate show {{ vm_template_id.stdout }} -j

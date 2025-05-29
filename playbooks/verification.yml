@@ -1,16 +1,12 @@
 ---
+
 # Will launch verification framework on the frontends
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
     - role: verification
-      vars:
-        run_core_services_verification: false
-        run_network_benchmark: false
           
 # Run network tests on the hypervisor hosts
 - hosts: "{{ node_group | d('node') }}"
   roles:
     - role: verification
-      vars:
-        run_core_services_verification: false
-        run_network_benchmark: true 
+

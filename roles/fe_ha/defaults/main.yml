@@ -1,0 +1,6 @@
+---
+#################### TEST CONFIGURATION VARIABLES ####################
+# Zone name
+
+one_zone_name: OpenNebula
+

@@ -1,0 +1,9 @@
+---
+
+- hosts: "{{ frontend_group | d('frontend') }}"
+  vars:
+    run_ha_verifications: true 
+  roles:
+    - role: fe_ha
+      when: run_ha_verifications == true
+

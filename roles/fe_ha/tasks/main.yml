@@ -1,0 +1,125 @@
+---
+
+- setup:
+    gather_subset:
+    - min
+
+- name: Install required task dependencies
+  ansible.builtin.package:
+    name:
+      - jq
+    state: present
+
+# Check VIP reachability from all the FE nodes
+- name: Check connection to API through a VIP from all FEs
+  ansible.builtin.wait_for:
+    host: "{{ one_vip }}"
+    port: 2633
+  register: vip_reachability
+   
+- name: Verify VIP reachability from all FEs
+  debug:
+    msg: "{{ vip_reachability.state }}"
+
+- name: Save VIP reachability from all FEs
+  set_fact:
+    verification_result: "{{ (verification_result | default({})) | combine({'VIP connectivity from all FEs': 'ok'}) }}"
+
+
+# Get zone details from the first FE, Assuming state set to 3 is the leader state
+- name: Get Zone
+  ansible.builtin.shell:
+    cmd: onezone show "{{ one_zone_name }}" -j | jq -r '.ZONE.SERVER_POOL.SERVER | .[] |select(.STATE == "3") | .NAME'
+  register: zone_details 
+  ignore_errors: true
+  when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host 
+  run_once: true    
+
+
+- name: Set initial leader node
+  set_fact:
+    initial_leader: "{{ zone_details.stdout }}"
+  run_once: true
+
+- name: Display current leder node
+  debug:
+    msg: "Current leader node is {{ initial_leader }}"
+
+- name: Save Initial Leader node
+  set_fact:
+    verification_result: "{{ verification_result | combine({'Initial FE leader node': initial_leader }) }}"
+
+
+- name: Stop OpenNebula oned service on the current leader to simulate failure
+  systemd:
+    name: opennebula
+    state: stopped
+  delegate_to: "{{ initial_leader }}" # Stop service on the identified leader
+  #when: ansible_host  == initial_leader
+  run_once: true
+
+  # Give OpenNebula's internal HA mechanism time to elect a new leader  
+- name: Wait for leader failover
+  pause:
+    seconds: 20 
+    prompt: "Waiting for OpenNebula to elect a new leader. Press Enter to continue after 1 minutes, or Ctrl+C to abort."
+  run_once: true 
+  
+- name: Check that one VIP was migrated and reachable from all FE nodes
+  ansible.builtin.wait_for:
+    host: "{{ one_vip }}"
+    port: 2633
+  register: vip_reachability
+
+- name: Save VIP reachability post migration
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VIP reachability after leader migration': 'ok' }) }}" 
+  
+- name: Verify VIP reachability from all FEs
+  debug:
+    msg: "{{ vip_reachability.state }}"
+
+
+- name: Get a new leader id
+  ansible.builtin.shell:
+    cmd: onezone show "{{ one_zone_name }}" -j | jq -r '.ZONE.SERVER_POOL.SERVER | .[] |select(.STATE == "3") | .NAME'
+  register: migrated_leader
+  ignore_errors: true
+  when: initial_leader != ansible_host
+  run_once: true
+  
+- name: Set a new leader node
+  set_fact:
+    migrated_leader: "{{ migrated_leader.stdout }}"
+  #delegate_to: 
+  #when: hostvars[groups[frontend_group | d('frontend')][1]]['ansible_host'] == ansible_host    
+  run_once: true
+
+- name: Save a new Leader node
+  set_fact:
+    verification_result: "{{ verification_result | combine({'A new FE leader node after the failover': migrated_leader }) }}"
+
+- name: Check that a leader indeed new
+  debug:
+    msg: "Original leader: {{ initial_leader }} a new leader is: {{ migrated_leader }}"
+  when: initial_leader != migrated_leader
+  run_once: true
+
+  # Start OpenNebula service on the original leader
+- name: Recover stopped leader
+  systemd:
+    name: opennebula
+    state: started
+  delegate_to: "{{ initial_leader }}"
+  run_once: true
+
+- name: Render results template
+  delegate_to: localhost
+  become: false
+  vars:
+    date: "{{ '%Y-%m-%d %H:%M:%S' | strftime(ansible_date_time.epoch) }}"
+  template:
+    src: report_template.j2
+    dest: /tmp/fe_ha_report.html
+  ignore_errors: True
+

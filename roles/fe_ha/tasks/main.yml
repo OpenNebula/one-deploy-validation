@@ -35,7 +35,50 @@
   when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host 
   run_once: true    
 
+# Test to verify that content of /etc/one directory is the same at all FE nodes
+- name: Check content of the /etc/one directory
+  find:
+    path: "{{ one_config_path }}"
+    file_type: file
+    recurse: false
+  register: found_files
 
+- name: Calculate sha256 sum for each file in the directory
+  stat:
+    path: "{{ item.path }}"
+    checksum_algorithm: sha256
+  loop: "{{ found_files.files }}"
+  register: file_hashes
+
+- name: Save hashes per host
+  set_fact:
+    file_checksums: "{{ file_checksums | default({}) | combine({ item.item.path: item.stat.checksum}) }}"
+  loop: "{{ file_hashes.results }}"
+  when:
+    - item.stat is defined
+    - item.stat.exists is defined and item.stat.exists
+    - item.stat.isreg is defined and item.stat.isreg
+    - item.stat.checksum is defined
+
+# Compare files using fe1 as a reference
+- name: Set fact for diff files
+  set_fact:
+    diff_files: |
+      {% for fname in hostvars[groups['frontend'][0]]['file_checksums'] %}
+        {% if  hostvars[groups['frontend'][0]]['file_checksums'][fname] != hostvars[item]['file_checksums'][fname] %}
+          {{ (diff_files_dict | default({})) | combine({ item : fname }) }}
+        {% endif %}
+      {% endfor %}
+  loop: "{{ groups.frontend }}"
+  run_once: true
+    
+- name: Save /etc/one content checks 
+  set_fact:
+    verification_result: "{{ verification_result | combine({'Check Content /etc/one diretory for file diffs at all FE nodes. Diff files': diff_files }) }}"
+  run_once: true
+
+### Leader failover tests
+#
 - name: Set initial leader node
   set_fact:
     initial_leader: "{{ zone_details.stdout }}"
@@ -62,7 +105,6 @@
 - name: Wait for leader failover
   pause:
     seconds: 20 
-    prompt: "Waiting for OpenNebula to elect a new leader. Press Enter to continue after 1 minutes, or Ctrl+C to abort."
   run_once: true 
   
 - name: Check that one VIP was migrated and reachable from all FE nodes

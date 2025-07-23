@@ -1,0 +1,73 @@
+---
+- hosts: all
+  tasks:
+    - name: Set playbook variables for Connectivity Matrix
+      set_fact:
+        _conn_matrix_bridge_name: "{{ validation.conn_matrix.bridge_name | d('br-default') }}"
+        _conn_matrix_ping_count: "{{ validation.conn_matrix.ping_count | d(10) }}"
+        _conn_matrix_vnet_name: "{{ validation.conn_matrix.vnet_name | d('vnet-default') }}"
+        # TODO: add a way to skip the whole conn_matrix if this is set to false. Right now it is always executed
+        execute_conn_matrix: false
+
+    - name: Set playbook variables for test VM
+      set_fact:
+        _test_vm_name: "{{ validation.vm.market_name | d('Alpine Linux 3.21') }}"
+        # NOTE: Optional parameters, can be overridden in the inventory file
+        # validation.vm.template_extra: |
+        #    MEMORY=256
+
+    - name: Save the output of the hostname command to the hostname variable
+      ansible.builtin.shell: hostname
+      register: hostname_cmd
+
+    - name: Set fact with hostname
+      set_fact:
+        hostname_cmd: "{{ hostname_cmd.stdout }}"
+
+- ansible.builtin.import_playbook: ./prepare-test-vm-template.yml
+
+- hosts: "{{ frontend_group | d('frontend') }}"
+  roles:
+    - role: test_vm
+    - role: storage-benchmark
+  tasks:
+    # Only execute these steps on a single frontend host
+    - when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+      block:
+        - name: Get list of OpenNebula host to "hostname_cmd" mapping
+          shell: onehost list -j
+          register: host_list_json
+          changed_when: false
+          no_log: true
+
+        - name: Set fact with host to "hostname_cmd" mapping
+          set_fact:
+            host_name_to_hostname_cmd: >-
+                {{
+                  dict(
+                    (host_list_json.stdout | from_json).HOST_POOL.HOST
+                    | map(attribute='NAME')
+                    | zip(
+                        (host_list_json.stdout | from_json).HOST_POOL.HOST
+                        | map(attribute='TEMPLATE')
+                        | map(attribute='HOSTNAME')
+                      )
+                  )
+                }}
+
+
+- ansible.builtin.import_playbook: ./conn-matrix.yml
+
+- ansible.builtin.import_playbook: ./vm-ha.yml
+
+- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
+
+# Will launch validation framework on the frontends
+- hosts: "{{ frontend_group | d('frontend') }}"
+  roles:
+    - role: validation
+
+# Run network tests on the hypervisor hosts
+- hosts: "{{ node_group | d('node') }}"
+  roles:
+    - role: network-benchmark

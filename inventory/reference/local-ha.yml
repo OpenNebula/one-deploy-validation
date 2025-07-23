@@ -1,0 +1,51 @@
+---
+all:
+  vars:
+    ansible_user: root
+    one_version: '7.0'
+    one_pass: opennebula
+    ee_token: 'ci:Pantufl4.'
+    one_vip: 172.20.0.100
+    one_vip_cidr: 24
+    one_vip_if: eth0
+    ds:
+      mode: ssh
+
+infra:
+  vars:
+    os_image_url: https://d24fmfybwxpuhu.cloudfront.net/ubuntu2404-6.10.0-2-20240710.qcow2
+    os_image_size: 30G
+    vcpu_static: 2
+    memory_MiB: 4096
+    ansible_user: root
+    infra_bridge: brpub
+  hosts:
+    node1:
+      ansible_host: 172.20.0.1
+
+frontend:
+  hosts:
+    fe01: 
+      ansible_host: 172.20.0.10
+      infra_hostname: 'node1'
+    fe02:
+      ansible_host: 172.20.0.11
+      infra_hostname: 'node1'
+    fe03:
+      ansible_host: 172.20.0.12
+      infra_hostname: 'node1'
+  vars:
+    context:
+      ETH0_IP: "{{ ansible_host }}"
+      PASSWORD: 'OpenNebula'
+      ETH0_GATEWAY: 172.20.0.1
+      ETH0_NETWORK: 172.20.0.0
+      ETH0_MASK: 255.255.255.0
+      ETH0_DNS: 172.20.0.1
+      SSH_PUBLIC_KEY: |
+          ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCkKbQKRj3FC++IBl9U1ZuLXaMBPRWr7HDY6kyHyMgQKaRZ0QTFkA9ADMwcrNu4H2xILN626r6qFTrc4zYpti0U/ps7cyodt50kqjFiaueB1gVbpPvP9mUjVk8NNXNmZDwgtYXaQDMCx14JfHn8mWgxKlwBCMlSRfOyJQx5EGpfzX/FoozRYm+mrUPt8LP+QFPVQMJj45q4Jnv2qWMwuJw7ZNjwnkFEaBLtPjpJTbxRVFeiBxVEwWcsqhKyRdvSDcZAMKoVQETKOw9bBY91sdycl+R+OoljQEa0WyBNO4WcDTc7mosohpj6o5mwybyp91PP88ZxJ4LUA1SYCXn3qBa9
+
+
+node:
+  hosts:
+    node1: { ansible_host: 172.20.0.1 }

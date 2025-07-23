@@ -36,18 +36,24 @@
   run_once: true    
 
 # Test to verify that content of /etc/one directory is the same at all FE nodes
-- name: Check content of the /etc/one directory
+- name: Check content of the config directories
   find:
-    path: "{{ one_config_path }}"
+    path: "{{ item }}"
     file_type: file
-    recurse: false
+    recurse: true 
   register: found_files
+  loop: "{{ validation.one_config_path }}"
+
+- name: Set combined list 
+  set_fact:
+    combined_file_list: "{{ combined_file_list | default([]) + item.files }}"
+  loop: "{{ found_files.results }}"
 
 - name: Calculate sha256 sum for each file in the directory
   stat:
     path: "{{ item.path }}"
     checksum_algorithm: sha256
-  loop: "{{ found_files.files }}"
+  loop: "{{ combined_file_list }}"
   register: file_hashes
 
 - name: Save hashes per host

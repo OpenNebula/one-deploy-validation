@@ -1,6 +1,11 @@
 ---
+- name: Set role default variables
+  set_fact:
+    _iperf_port: "{{ validation.network_benchmark.iperf_port | d(5201) }}"
+    _iperf_test_time: "{{ validation.network_benchmark.iperf_test_time | d(10) }}"
+
 - name: Run network benchmarking
   ansible.builtin.include_tasks:
     file: "{{ role_path }}/tasks/network_benchmark.yml"
-  when: run_network_benchmark
+  when: validation.run_network_benchmark | d(true)
 

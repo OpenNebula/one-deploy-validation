@@ -21,18 +21,18 @@ export
 # Make sure we source ANSIBLE_ settings from ansible.cfg exclusively.
 unexport $(filter ANSIBLE_%,$(.VARIABLES))
 
-.PHONY: verification
+.PHONY: validation
 
-verification: _TAGS      := $(if $(TAGS),-t $(TAGS),)
-verification: _SKIP_TAGS := $(if $(SKIP_TAGS),--skip-tags $(SKIP_TAGS),)
-verification: _VERBOSE   := $(if $(VERBOSE),-$(VERBOSE),)
+validation: _TAGS      := $(if $(TAGS),-t $(TAGS),)
+validation: _SKIP_TAGS := $(if $(SKIP_TAGS),--skip-tags $(SKIP_TAGS),)
+validation: _VERBOSE   := $(if $(VERBOSE),-$(VERBOSE),)
 
 ifdef ENV_ONE_DEPLOY_VALIDATION
 $(ENV_ONE_DEPLOY_VALIDATION):
 	hatch env create validation-default
 endif
 
-verification: $(ENV_ONE_DEPLOY_VALIDATION)
+validation: $(ENV_ONE_DEPLOY_VALIDATION)
 	cd $(SELF)/ && \
-	$(call ENV_RUN,validation-default) ansible-playbook $(_VERBOSE) -i $(INVENTORY) $(_TAGS) $(_SKIP_TAGS) $(SELF)/playbooks/verification.yml
+	$(call ENV_RUN,validation-default) ansible-playbook $(_VERBOSE) -i $(INVENTORY) $(_TAGS) $(_SKIP_TAGS) $(SELF)/playbooks/validation.yml
 

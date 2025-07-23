@@ -1,4 +1,0 @@
----
-#################### TEST EXECUTION CONTROL VARIABLES ####################
-run_core_services_verification: true
-verification_check_fireedge_ui: true

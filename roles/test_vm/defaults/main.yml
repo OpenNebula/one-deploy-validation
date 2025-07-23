@@ -1,17 +1,25 @@
 ---
-#################### TEST CONFIGURATION VARIABLES ####################
-# Do we want check connection to the test VM? network might be blocked from FE
-test_vm_check_connection: false
-
-# Should we create a test network or reuse existing net? Existin network defined in {{test_vnet_name}} var
-create_test_network: false
-
 # Vars for the test network
-test_vnet_name: 'VLAN_580'
-test_bridge_name: 'br-test'
-test_phydev: 
+validation:
+  # Should we create a test network or reuse existing net? Existin network defined in {{validation.vnet.name}} var
+  create_vnet: true
+  vm:
+    check_connection: true
+    market_name: 'Alpine Linux 3.21'
+    template_extra: |
+      MEMORY="512"
+  vnet:
+    name: 'VLAN_580'
+    desc: 'A test network for post-deployment cloud verification'
+    bridge: 'br-test'
+    vn_mad: 'dummy'
+    phydev: ''
+    network_address: '10.0.0.0'
+    network_mask: '255.255.255.0'
+    dns: '8.8.8.8'
+    gateway: '10.0.0.1'
+    ar:
+      - type: "IP4"
+        ip: '10.0.0.10'
+        size: '10'
 
-test_ip_net: '10.0.0.10'
-test_subnet_mask: '255.255.255.0'
-test_dns: '10.0.0.1'
-test_gw: '10.0.0.1'

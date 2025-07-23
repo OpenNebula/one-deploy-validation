@@ -1,0 +1,32 @@
+---
+ansible_python_interpreter: /usr/bin/python3
+
+validation:
+  # Check if OpenNebula services are running
+  core_services: true
+  # List of services to check enabled, stop and restart
+  service_list:
+    - name: opennebula.service
+      desc: OpenNebula core (oned)
+    - name: opennebula-gate.service
+      desc: OpenNebula gate
+    - name: opennebula-flow.service
+      desc: OpenNebula flow
+  check_fireedge_ui: false
+  run_storage_benchmark: false
+  run_network_benchmark: true
+  create_vnet: false
+  conn_matrix:
+    bridge_name: br0
+    vnet_name: public
+  vm:
+    check_connection: false
+    market_name: 'Alpine Linux 3.21'
+    # template_extra: |
+    #   MEMORY="512"
+  run_vm_ha: true
+  vm_ha:
+    produce_error_method: 'if_down'
+    if_down_params:
+      interface_name: 'br0'
+

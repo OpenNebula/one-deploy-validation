@@ -32,16 +32,16 @@
 
           - name: Write extra template variables to a temporary file on the remote host
             ansible.builtin.copy:
-              content: "{{ test_vm_template_extra }}"
+              content: "{{ validation.vm.template_extra }}"
               dest: "/tmp/test_vm_template_extra.txt"
-            when: test_vm_template_extra is defined
+            when: validation.vm.template_extra is defined
 
           - name: Update VM template with extra data
             ansible.builtin.shell: >
               onetemplate update --append {{ vm_template_id.stdout }} /tmp/test_vm_template_extra.txt
             register: update_vm_template_extra
             failed_when: update_vm_template_extra.rc != 0
-            when: test_vm_template_extra is defined
+            when: validation.vm.template_extra is defined
 
           - name: Get VM template as JSON
             ansible.builtin.shell: >

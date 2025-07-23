@@ -1,8 +1,0 @@
----
-#################### TEST EXECUTION CONTROL VARIABLES ####################
-run_network_benchmark: true
-
-# PArameters for iperf network benchmarking
-iperf:
-  port: 5201
-  test_time: 10

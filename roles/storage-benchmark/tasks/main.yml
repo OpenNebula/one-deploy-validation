@@ -1,4 +1,16 @@
 ---
+- name: Ensure storage benchmark validation variables are set with defaults
+  set_fact:
+    validation: >-
+      {{
+        validation | default({}) | combine({
+          'run_storage_benchmark': validation.run_storage_benchmark | default(true),
+          'storage_benchmark': validation.storage_benchmark | default({
+            'vnet_name': 'VLAN_580'
+          })
+        }, recursive=True)
+      }}
+
 - name: Run storage benchmark test
   ansible.builtin.include_tasks:
     file: "{{ role_path }}/tasks/storage_benchmark.yml"

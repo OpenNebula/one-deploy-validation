@@ -25,13 +25,13 @@
   loop: "{{ ping_exec.results }}"
 
 - name: Check if iperf3 server is running
-  ansible.builtin.command: pgrep -f "iperf3 -s -p {{ iperf.port }}"
+  ansible.builtin.command: pgrep -f "iperf3 -s -p {{ _iperf_port }}"
   register: iperf3_check
   ignore_errors: true
   changed_when: false
 
 - name: Start iperf3 server in all hosts
-  ansible.builtin.command: nohup iperf3 -s -p {{ iperf.port }} > /dev/null 2>&1 &
+  ansible.builtin.command: nohup iperf3 -s -p {{ _iperf_port }} > /dev/null 2>&1 &
   async: 30
   poll: 0
   when: iperf3_check.rc != 0
@@ -39,13 +39,13 @@
 
 - name: Verify iperf3 is running
   ansible.builtin.wait_for:
-    port: "{{ iperf.port }}"
+    port: "{{ _iperf_port }}"
     timeout: 30
 
 - name: Run iperf3 tests
   ansible.builtin.shell: |
     set -o pipefail
-    iperf3 -c {{ item }} -p {{ iperf.port }} -t {{ iperf.test_time }} -J | jq .end.sum_sent.bits_per_second
+    iperf3 -c {{ item }} -p {{ _iperf_port }} -t {{ _iperf_test_time }} -J | jq .end.sum_sent.bits_per_second
   args:
     executable: /bin/bash
   register: iperf_results

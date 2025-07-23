@@ -36,7 +36,7 @@
     onetemplate instantiate {{ test_vm_template_id }} --nic {{ _conn_matrix_vnet_name }} \
       --name conn-mtx-vm-on-host-{{ host_id }} --raw '{{
         (extra_template_content_raw.content | b64decode) +
-        (test_vm_template_extra if test_vm_template_extra is defined else "")
+        (validation.vm.template_extra if validation.vm.template_extra is defined else "")
       }}'
   register: vm_id
   failed_when: "vm_id.rc != 0" 

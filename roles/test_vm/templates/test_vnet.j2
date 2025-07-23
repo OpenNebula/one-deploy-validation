@@ -1,18 +1,20 @@
 # Template for the test network
-NAME        = "{{ test_vnet_name }}"
-DESCRIPTION = "A test network for post-deployment cloud verification"
+NAME        = "{{ validation.vnet.name }}"
+DESCRIPTION = "{{ validation.vnet.desc }}"
 
-VN_MAD = dummy
-BRIDGE = {{ test_bridge_name | default('br-test') }}
+VN_MAD = {{ validation.vnet.vn_mad }}
+BRIDGE = {{ validation.vnet.bridge | d('br-test') }}
 
-{% if test_phydev is not none %}
-PHYDEV = {{ test_phydev }}
+{% if validation.vnet.phydev is not none %}
+PHYDEV = {{ validation.vnet.phydev }}
 {% endif %}
 
-NETWORK_ADDRESS = {{ test_ip_net | default('10.0.0.10') }}
-NETWORK_MASK    = {{ test_subnet_mask | default('255.255.255.0') }}
-DNS             = {{ test_dns | default('10.0.0.1') }}
-GATEWAY         = {{ test_gw | default('10.0.0.1') }}
+NETWORK_ADDRESS = {{ validation.vnet.network_address | d('10.0.0.0') }}
+NETWORK_MASK    = {{ validation.vnet.network_mask | d('255.255.255.0') }}
+DNS             = {{ validation.vnet.dns | d('8.8.8.8') }}
+GATEWAY         = {{ validation.vnet.gateway | d('10.0.0.1') }}
 
-AR=[TYPE = "IP4", IP = "{{ test_ip_net | default('10.0.0.10') }}", SIZE = "10" ]
+{% for r in validation.vnet.ar %}
+AR=[TYPE="{{ r.type }}", IP="{{ r.ip }}", SIZE="{{ r.size }}"]
+{% endfor %}
 

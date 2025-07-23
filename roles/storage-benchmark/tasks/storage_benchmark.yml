@@ -6,13 +6,13 @@
 #  fio --name=fiotest --blocksize=4k --directory=/tmp --size=5g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randread --direct=1 --group_reporting  --output-format=json | jq '.jobs[0].read'
 
 ###
-# Storage benchmarking. Execute the block below only when {{ execute_storage_benchmarking }} variable set
+# Storage benchmarking. Execute the block below only when {{ validation.storage_benchmark }} variable set
 ###
 - name: Run Storage benchmark test
   block:
   - name: Instantiate benchmark VM
     ansible.builtin.shell: >
-      onetemplate instantiate {{ test_vm_template_id }} --nic '{{test_vnet_name}}' --disk {{ test_vm_template_image_id }}:size=10000 --mem 2g
+      onetemplate instantiate {{ test_vm_template_id }} --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=10000 --mem 2g
     register: benchmarkvm_id
     failed_when: "benchmarkvm_id.rc != 0"
     # retry for robustness, e.g. in case we can only have 1 test VM running at a time for some reason, previous one is still shutting down.
@@ -81,4 +81,4 @@
     register: cleanup_result
     failed_when: "cleanup_result.rc != 0"
 
-  when: execute_storage_benchmarking
+  when: validation.run_storage_benchmark | d(true)

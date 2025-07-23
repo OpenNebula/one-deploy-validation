@@ -31,10 +31,10 @@ The development of the tests should be structured in [playbooks](./playbooks/) a
 1. To execute `ansible-playbook` you can run
 
    ```shell
-   make I=inventory/example.yml verification
+   make I=inventory/reference/example.yml validation
    ```
 
-## Verification Results
+## Validation Results
 
 The execution of the all the tests produces the following output files on the Ansible controller (e.g. laptop):
 

@@ -1,0 +1,22 @@
+---
+- name: Ensure validation variables are set with defaults
+  set_fact:
+    validation: >-
+      {{
+        validation | default({}) | combine({
+          'core_services': validation.core_services | default(true),
+          'service_list': validation.service_list | default([
+            {'name': 'opennebula.service', 'desc': 'OpenNebula core (oned)'},
+            {'name': 'opennebula-gate.service', 'desc': 'OpenNebula gate'},
+            {'name': 'opennebula-flow.service', 'desc': 'OpenNebula flow'},
+            {'name': 'opennebula-fireedge.service', 'desc': 'OpenNebula Fireedge GUI'}
+          ]),
+          'check_fireedge_ui': validation.check_fireedge_ui | default(true)
+        }, recursive=True)
+      }}
+
+- name: Run core infrastucture verification test
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/tasks/core_services_verification.yml"
+  when: validation.core_services
+

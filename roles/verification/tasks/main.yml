@@ -1,6 +1,0 @@
----
-- name: Run core infrastucture verification test
-  ansible.builtin.include_tasks:
-    file: "{{ role_path }}/tasks/core_services_verification.yml"
-  when: run_core_services_verification
-

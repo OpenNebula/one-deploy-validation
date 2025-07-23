@@ -4,13 +4,6 @@ all:
     ansible_user: root
     ensure_keys_for: [root]
 
-    test_vnet_name: public
-    conn_matrix_bridge_name: br0
-    conn_matrix_vnet_name: public
-
-    execute_storage_benchmarking: false
-    verification_check_fireedge_ui: false
-
     one_version: '7.0'
 
 frontend:

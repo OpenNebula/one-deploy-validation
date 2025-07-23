@@ -17,13 +17,6 @@
       ansible.builtin.set_fact:
         conn_matrix_pubkey: "{{ conn_matrix_pubkey_raw['content'] | b64decode }}"
 
-    - name: Save the output of the hostname command to the hostname variable
-      ansible.builtin.shell: hostname
-      register: hostname_cmd
-
-    - name: Set fact with hostname
-      ansible.builtin.set_fact:
-        hostname_cmd: "{{ hostname_cmd.stdout }}"
 
 - name: Collect all public keys into a dictionary
   hosts: localhost
@@ -57,27 +50,6 @@
           shell: onehost list -l ID,NAME --csv --no-header
           register: host_ids_and_names
           changed_when: false
-
-        - name: Get list of OpenNebula host to "hostname_cmd" mapping
-          shell: onehost list -j
-          register: host_list_json
-          changed_when: false
-          no_log: true
-
-        - name: Set fact with host to "hostname_cmd" mapping
-          set_fact:
-            host_name_to_hostname_cmd: >-
-                {{
-                  dict(
-                    (host_list_json.stdout | from_json).HOST_POOL.HOST
-                    | map(attribute='NAME')
-                    | zip(
-                        (host_list_json.stdout | from_json).HOST_POOL.HOST
-                        | map(attribute='TEMPLATE')
-                        | map(attribute='HOSTNAME')
-                      )
-                  )
-                }}
 
         - name: Create a dedicated VM group and VM for each host
           ansible.builtin.include_tasks: tasks/conn_matrix_per_host.yml

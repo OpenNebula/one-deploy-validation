@@ -67,6 +67,14 @@
   roles:
     - role: validation
 
+
+# Run FE HA verfification only when variable run_ha_verifications is set to true
+- hosts: "{{ frontend_group | d('frontend') }}"
+  roles:
+    - role: fe_ha
+  when: validation.run_ha_verifications == true
+
+
 # Run network tests on the hypervisor hosts
 - hosts: "{{ node_group | d('node') }}"
   roles:

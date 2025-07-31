@@ -29,7 +29,7 @@
 # Get zone details from the first FE, Assuming state set to 3 is the leader state
 - name: Get Zone
   ansible.builtin.shell:
-    cmd: onezone show "{{ one_zone_name }}" -j | jq -r '.ZONE.SERVER_POOL.SERVER | .[] |select(.STATE == "3") | .NAME'
+    cmd: onezone show "{{ validation.fe_ha.one_zone_name }}" -j | jq -r '.ZONE.SERVER_POOL.SERVER | .[] |select(.STATE == "3") | .NAME'
   register: zone_details 
   ignore_errors: true
   when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host 
@@ -42,7 +42,7 @@
     file_type: file
     recurse: true 
   register: found_files
-  loop: "{{ validation.one_config_path }}"
+  loop: "{{ validation.fe_ha.one_config_path }}"
 
 - name: Set combined list 
   set_fact:
@@ -78,9 +78,9 @@
   loop: "{{ groups.frontend }}"
   run_once: true
     
-- name: Save /etc/one content checks 
+- name: Save file content checks 
   set_fact:
-    verification_result: "{{ verification_result | combine({'Check Content /etc/one diretory for file diffs at all FE nodes. Diff files': diff_files }) }}"
+    verification_result: "{{ verification_result | combine({'Check Content of the config diretory for file diffs at all FE nodes. Diff files': diff_files }) }}"
   run_once: true
 
 ### Leader failover tests

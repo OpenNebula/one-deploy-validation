@@ -4,10 +4,7 @@ ansible_python_interpreter: /usr/bin/python3
 validation:
   # Check if OpenNebula services are running
   core_services: true
-  run_ha_verifications: true
-  one_config_path:
-    - /etc/one
-    - /var/lib/one/remotes/etc
+  run_ha_verifications: true 
   # List of services to check enabled, stop and restart
   service_list:
     - name: opennebula.service
@@ -60,3 +57,8 @@ validation:
       interface_name: 'br-test'
     fencing_check_retries: 8
     fencing_check_delay: 60
+  fe_ha:
+    one_config_path:
+      - /etc/one
+      - /var/lib/one/remotes/etc
+    one_zone_name: OpenNebula

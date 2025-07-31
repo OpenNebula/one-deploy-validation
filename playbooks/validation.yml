@@ -72,7 +72,7 @@
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
     - role: fe_ha
-  when: validation.run_ha_verifications == true
+      when: validation.run_ha_verifications == true 
 
 
 # Run network tests on the hypervisor hosts

@@ -1,0 +1,119 @@
+---
+
+# Gather min subset of facts for datetime
+- setup:
+    gather_subset:
+    - min
+
+- name: Install dependencies
+  ansible.builtin.package:
+    name:
+      - jc
+      - jq
+    state: present
+
+# These tasks are used to test networks, reachability of the default gw, DNS and external connectivity
+- name: Get all OpenNebula networks
+  ansible.builtin.shell: >
+    onevnet list -j | jq .VNET_POOL.VNET[].NAME -r
+  register: one_networks
+  failed_when: "one_networks.rc != 0"
+  run_once: true
+    
+- name: Print network list
+  debug:
+    msg: "{{ one_networks.stdout }}"
+  run_once: true
+
+# We'll use VM template from the test_vm role 
+#
+- name: Instantiate VM at each network
+  ansible.builtin.shell: >
+    onetemplate instantiate '{{ validation.vm.market_name }}' --nic '{{ item }}'
+  register: vms
+  failed_when: "vms.rc != 0"
+  loop: "{{ one_networks.stdout.splitlines() }}"
+  run_once: true
+
+
+- name: Wait for VM come up
+  ansible.builtin.shell: >
+    onevm list --f ID={{ item.stdout.split(':')[1] | trim}} -l STAT --no-header
+  register: vm_state
+  failed_when: "vm_state.rc != 0"
+  until: vm_state.stdout == "runn"
+  retries: 10
+  delay: 10
+  loop: "{{ vms.results }}"
+  run_once: true
+
+- name: Print network list
+  debug:
+    msg: "{{ vms.results }}"
+  run_once: true
+
+- name: Get VM IP
+  ansible.builtin.shell: >
+    onevm list --f ID={{item.stdout.split(':')[1] | trim}} -l IP --no-header
+  register: vm_ip
+  loop: "{{ vms.results }}"
+  run_once: true
+
+- name: Print VM IP
+  debug:
+    msg: "{{ vm_ip.results }}"
+  run_once: true
+
+
+- name: Verify connection to the test VM
+  ansible.builtin.shell: >
+    ping -c 2 {{ item.stdout }}
+  register: vm_ping_result
+  until: vm_ping_result.rc == 0
+  retries: 10
+  delay: 10
+  loop: "{{ vm_ip.results }}"
+  run_once: true
+
+# 
+- name: Check GW reachability from VM
+  ansible.builtin.shell: |
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} apk update > /dev/null
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} apk add dig jc > /dev/null
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} ping -c 3 $(ip route show default | awk '{print $3}') | jc --ping --pretty
+  register: gw_reachability
+  loop: "{{ vm_ip.results }}"
+  run_once: true
+
+- name: Check DNS resolvation
+  ansible.builtin.shell: |
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} dig {{ validation.network.ext_host  }}   | jc --dig -p
+  register: dns_reachability
+  loop: "{{ vms.results }}"
+  run_once: true
+
+- name: Check external host {{ test_ext_host }} reachability from the test VM
+  ansible.builtin.shell: |
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} ping -c 3 {{ validation.network.ext_host  }} | jc --ping --pretty
+  register: ext_host_reachability
+  loop: "{{ vm_ip.results }}"
+  run_once: true
+
+
+    ## Prepare report 
+    #- name: Render report
+    #  delegate_to: localhost
+    #  become: false
+    #  vars:
+    #    date: "{{ '%Y-%m-%d %H:%M:%S' | strftime(ansible_date_time.epoch) }}"  
+    #  template:
+    #    src: appendix-cloud-report.j2 
+    #    dest: /tmp/cloud_verification_report.html
+    #  ignore_errors: True
+    #
+    #- name: Print report location
+    #  ansible.builtin.debug: 
+    #    msg: |
+    #      ******************************************************
+    #      Verification report rendered to /tmp/cloud_verification_report.html
+    #      ******************************************************

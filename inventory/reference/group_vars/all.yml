@@ -3,8 +3,9 @@ ansible_python_interpreter: /usr/bin/python3
 
 validation:
   # Check if OpenNebula services are running
-  core_services: true
-  run_ha_verifications: true 
+  core_services: false 
+  #run_ha_verifications: true
+  networks_verification: true 
   # List of services to check enabled, stop and restart
   service_list:
     - name: opennebula.service
@@ -62,3 +63,5 @@ validation:
       - /etc/one
       - /var/lib/one/remotes/etc
     one_zone_name: OpenNebula
+  network:
+    ext_host: 'google.com'

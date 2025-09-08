@@ -85,7 +85,7 @@
     - name: Import fe-ha playbook
       import_playbook:
         name: fe-ha
-  when: validation.run_fe_ha == true
+      when: validation.run_fe_ha == true
 
 # Render verification report
 - hosts: localhost

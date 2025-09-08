@@ -9,13 +9,14 @@ This repository provides a toolset for automating the validation of an OpenNebul
 1. Install `hatch`, which is used by the [Makefile](./Makefile) to manage virtual environments.
 
    ```shell
-   pip install hatch
+   pip install hatch uv
    ```
 
    or
 
    ```shell
    pipx install hatch
+   pipx install uv
    ```
 
    or use any other method you see fit.

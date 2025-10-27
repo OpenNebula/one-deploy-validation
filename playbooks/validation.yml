@@ -71,8 +71,6 @@
 
 - ansible.builtin.import_playbook: ./vm-ha.yml
 
-- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
-
 # Will launch validation framework on the frontends
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
@@ -86,6 +84,8 @@
       import_playbook:
         name: fe-ha
       when: validation.run_fe_ha == true
+
+- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
 
 # Render verification report
 - hosts: localhost

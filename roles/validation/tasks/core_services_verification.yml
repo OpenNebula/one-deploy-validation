@@ -107,10 +107,6 @@
   set_fact:
     verification_result: "{{ verification_result | combine({'OpenNebula one-gate service listens on the server' : 'ok'}) }}"
 
-- name: Save one-flow listen & port on the server
-  set_fact:
-    verification_result: "{{ verification_result | combine({'Verify one-flow stops and starts' : 'ok'}) }}"
-
 - name: Verify oneflow listen & port on the server
   ansible.builtin.shell: >
     ss -tlpn | grep -o $(cat /etc/one/oneflow-server.conf | awk '/^:port:/ {print $2}')

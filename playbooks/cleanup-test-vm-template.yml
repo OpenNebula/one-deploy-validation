@@ -23,3 +23,10 @@
           path: /tmp/test_vm_template_extra.txt
           state: absent
         when: validation.test_vm.vm.template_extra is defined
+
+      - name: Cleanup created test network
+        ansible.builtin.shell: |
+          onevnet delete "{{ validation.test_vm.vnet.name }}"
+        register: cleanup_result
+        failed_when: "cleanup_result.rc != 0"
+        when: validation.test_vm.create_vnet and not validation.test_vm.vm.check_connection

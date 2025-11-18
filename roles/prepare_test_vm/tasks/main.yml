@@ -1,0 +1,67 @@
+---
+- name: Previous things
+  block:
+    - name: Download test VM template and image from the Marketplace
+      ansible.builtin.shell: |
+        onemarketapp export $(onemarketapp list -f NAME='{{ _test_vm_name }}' -l ID --no-header) -d $(onedatastore list -f TYPE=img -l ID --no-header | head -n 1) '{{_test_vm_name}}'
+      register: vm_download
+      # success when: rc == 0 or rc == 255 and 'NAME is already taken by IMAGE' in stderr
+      failed_when: "vm_download.rc != 0 and (vm_download.rc != 255 or 'NAME is already taken by IMAGE' not in vm_download.stderr)"
+  
+    - name: Verify VM Download from Marketplace
+      set_fact:
+        verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' : 'ok' }) }}"
+  
+    # We have to check that image was downlodaded before attempting to instantiate VM
+    - name: Get newly downloaded VM template ID
+      ansible.builtin.shell: >
+        echo '{{ vm_download.stdout }}' | grep -A1 VMTEMPLATE | grep ID | awk '{print $2}'
+      register: new_vm_template_id
+      failed_when: "new_vm_template_id.rc != 0"
+      when: vm_download.rc == 0
+  
+    - name: Get existing VM template ID
+      ansible.builtin.shell: >
+        onetemplate list --csv -f NAME='{{ _test_vm_name }}' -l ID --no-header
+      register: existing_vm_template_id
+      failed_when: "existing_vm_template_id.rc != 0"
+      when: vm_download.rc == 255 and 'NAME is already taken by IMAGE' in vm_download.stderr
+        
+    - name: Set VM template ID
+      set_fact:
+        vm_template_id: "{{ new_vm_template_id if not new_vm_template_id.skipped|default(false) else existing_vm_template_id }}"
+      failed_when: new_vm_template_id.skipped|default(false) and existing_vm_template_id.skipped|default(false)
+  
+    - name: Write extra template variables to a temporary file on the remote host
+      ansible.builtin.copy:
+        content: "{{ validation.test_vm.vm.template_extra }}"
+        dest: "/tmp/test_vm_template_extra.txt"
+      when: validation.test_vm.vm.template_extra is defined
+  
+    - name: Update VM template with extra data
+      ansible.builtin.shell: >
+        onetemplate update --append {{ vm_template_id.stdout }} /tmp/test_vm_template_extra.txt
+      register: update_vm_template_extra
+      failed_when: update_vm_template_extra.rc != 0
+      when: validation.test_vm.vm.template_extra is defined
+  
+    - name: Verify VM template update
+      set_fact:
+        verification_result: "{{ (verification_result | default({})) | combine({'Updating a VM template' : 'ok' }) }}"
+  
+    - name: Get VM template as JSON
+      ansible.builtin.shell: >
+        onetemplate show {{ vm_template_id.stdout }} -j
+      register: image_output
+      failed_when: "image_output.rc != 0 and image_output.stdout != ''"
+  
+    - name: Set VM template's image ID
+      set_fact:
+        vm_template_image_id: "{{ image_output.stdout | from_json | json_query('VMTEMPLATE.TEMPLATE.DISK.IMAGE_ID') }}"
+  when: validation.run_test_vm | default(true) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+  
+- name: Transfer the  VM template ID and image ID to all hosts
+  ansible.builtin.set_fact:
+    test_vm_template_id: "{{ hostvars[groups[frontend_group | d('frontend')][0]]['vm_template_id'].stdout }}"
+    test_vm_template_image_id: "{{ hostvars[groups[frontend_group | d('frontend')][0]]['vm_template_image_id'] }}"
+  when: validation.run_test_vm | default(true)

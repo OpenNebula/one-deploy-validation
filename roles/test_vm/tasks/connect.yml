@@ -1,0 +1,45 @@
+- name: Check connection to VM
+  when: validation.test_vm.vm.check_connection
+  block:
+  - name: Attach NIC to test VM
+    ansible.builtin.shell: >
+      onevm nic-attach -n '{{ validation.test_vm.vnet.name }}' {{ vm_id.stdout.split(':')[1] | trim }}
+
+  - name: Wait until NIC is attached
+    ansible.builtin.shell: >
+      onevm show -j {{vm_id.stdout.split(':')[1]}} | jq -r .VM.STATE  
+    register: vm_state_result
+    until: vm_state_result.stdout is search('3')
+    retries: 10
+    delay: 5
+
+  - name: Get VM IP
+    ansible.builtin.shell: >
+      onevm list --f ID={{vm_id.stdout.split(':')[1] | trim}} -l IP --no-header
+    register: vm_ip
+    failed_when: "vm_state.rc != 0"
+  
+  - name: Verify connection to the test VM
+    ansible.builtin.shell: >
+      ping -c 2 {{ vm_ip.stdout }}
+    register: vm_ping_result
+    until: vm_ping_result.rc == 0
+    retries: 10
+    delay: 10
+  
+  - name: Record connection status to test VM
+    set_fact:
+      verification_result: "{{ verification_result | combine({'Connection to the test VM instance' : 'ok' }) }}"
+
+  #onevm ssh --cmd "onegate vm show" {{ vm_id.stdout.split(':')[1] | trim }}
+  - name: Check if onegate is running OK on the VM
+    become: true
+    become_user: oneadmin
+    ansible.builtin.shell: >
+      ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} onegate vm show
+    register: vm_onegate_result
+
+  - name: Show last result
+    ansible.builtin.debug:
+      var: vm_onegate_result
+

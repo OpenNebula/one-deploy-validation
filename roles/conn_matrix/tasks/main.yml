@@ -1,0 +1,39 @@
+---
+# 1) Generate SSH key on node hosts
+- name: Generate SSH key and expose public key (node)
+  include_tasks: node_generate_key.yml
+  when: "(validation.run_conn_matrix | d(true)) and (node_group | d('node')) in group_names"
+
+# 2) Collect all public keys to localhost (run once)
+- name: Collect all public keys into a dictionary (localhost)
+  include_tasks: collect_pubkeys.yml
+  when: validation.run_conn_matrix | d(true)
+  run_once: true
+  delegate_to: localhost
+
+# 3) On frontend primary create VMs and build mapping
+- name: Create VMs and build host->VM mapping (frontend primary)
+  include_tasks: frontend_create_vms.yml
+  when: "(validation.run_conn_matrix | d(true)) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host"
+
+# 4) On node hosts run the connectivity tests
+- name: Run connectivity tests from node hosts
+  include_tasks: node_run_tests.yml
+  when: "(validation.run_conn_matrix | d(true)) and (node_group | d('node')) in group_names"
+
+# 5) Render report on localhost (run once)
+- name: Render the connection matrix report (localhost)
+  include_tasks: render_report.yml
+  when: validation.run_conn_matrix | d(true)
+  run_once: true
+  delegate_to: localhost
+
+# 6) Cleanup on node hosts
+- name: Cleanup node-side artifacts
+  include_tasks: cleanup.yml
+  when: "(validation.run_conn_matrix | d(true)) and (node_group | d('node')) in group_names"
+
+# 7) Cleanup on frontend primary
+- name: Cleanup frontend-side artifacts (frontend primary)
+  include_tasks: frontend_cleanup.yml
+  when: "(validation.run_conn_matrix | d(true)) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host"

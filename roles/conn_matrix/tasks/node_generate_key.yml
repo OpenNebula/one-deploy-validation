@@ -1,0 +1,16 @@
+---
+# Generate SSH key pair and expose public key as fact
+- name: Generate SSH key pair for conn-matrix
+  ansible.builtin.command: ssh-keygen -t rsa -b 4096 -N "" -f $HOME/.ssh/conn-matrix -q
+  args:
+    creates: "{{ ansible_env.HOME }}/.ssh/conn-matrix"
+
+- name: Read public key
+  ansible.builtin.slurp:
+    src: "{{ ansible_env.HOME }}/.ssh/conn-matrix.pub"
+  register: conn_matrix_pubkey_raw
+  no_log: true
+
+- name: Set fact with public key
+  ansible.builtin.set_fact:
+    conn_matrix_pubkey: "{{ conn_matrix_pubkey_raw['content'] | b64decode }}"

@@ -1,6 +1,18 @@
 ---
 ansible_python_interpreter: /usr/bin/python3
 
+ansible_user: root
+ensure_keys_for: [root]
+
+ensure_hostname: true
+ensure_hosts: true
+
+unattend_disable: true
+update_pkg_cache: true
+
+one_version: '6.10'
+one_pass: 'a341dbcf62df066e011ab0aabf785ab6'
+
 validation:
 
   # TEST CASE NAME: Core Services
@@ -55,6 +67,7 @@ validation:
     bridge_name: br-test
     ping_count: 10
     vnet_name: VLAN_580
+    market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: VM instantiation
   # DESCRIPTION: Fetches a VM template and image from the OpenNebula Marketplace and instantiates it.
@@ -67,6 +80,12 @@ validation:
       market_name: 'Alpine Linux 3.21'
       template_extra: |
         MEMORY="512"
+        CONTEXT=[
+          NETWORK="YES",
+          REPORT_READY="YES",
+          SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
+          TOKEN="YES" 
+        ]
     create_vnet: true
     vnet:
       name: 'tes-vnet'

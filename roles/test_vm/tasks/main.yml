@@ -1,4 +1,9 @@
 ---
+ 
+- name: "Preparation tasks"
+  ansible.builtin.include_tasks:
+    file: prepare.yml
+  when: validation.run_test_vm | default(true) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
 
 - name: Network related tasks
   ansible.builtin.include_tasks:

@@ -1,0 +1,19 @@
+---
+- name: Build dictionary of node public keys
+  ansible.builtin.set_fact:
+    conn_matrix_pubkeys: >-
+      {{
+        dict(
+          hostvars
+          | dict2items
+          | selectattr('value.conn_matrix_pubkey', 'defined')
+          | map(attribute='value.hostname_cmd')
+          | zip(
+              hostvars
+              | dict2items
+              | selectattr('value.conn_matrix_pubkey', 'defined')
+              | map(attribute='value.conn_matrix_pubkey')
+            )
+        )
+      }}
+  no_log: true

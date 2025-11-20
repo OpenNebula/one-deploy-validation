@@ -6,6 +6,63 @@
     	<link href="https://fonts.googleapis.com/css2?family=Ubuntu&display=swap" rel="stylesheet">
 	<style type="text/css">
 		body {font-family: 'Ubuntu', sans-serif;}
+
+		/* Table styling reused from FE report for consistency */
+		.table_component {
+		    overflow: auto;
+		    width: 100%;
+		    margin-bottom: 0.5in;
+		}
+
+		.table_component table {
+		    border: 1px solid #dededf;
+		    width: 100%;
+		    table-layout: fixed;
+		    border-collapse: collapse;
+		    border-spacing: 1px;
+		    text-align: left;
+		    font-size: 11pt;
+		}
+
+		.table_component caption {
+		    caption-side: top;
+		    text-align: left;
+		    font-weight: bold;
+		    margin-bottom: 6px;
+		}
+
+		.table_component th {
+		    border: 1px solid #dededf;
+		    background-color: #eceff1;
+		    color: #000000;
+		    padding: 8px;
+		    text-align: left;
+		}
+
+		.table_component td {
+		    border: 1px solid #dededf;
+		    background-color: #ffffff;
+		    color: #000000;
+		    padding: 8px;
+		}
+
+		/* Numeric columns should be right aligned */
+		.table_component td.num, .table_component th.num { text-align: right; }
+
+		/* Zebra rows */
+		.table_component tr:nth-child(even) td { background: #fbfbfb; }
+
+		/* Network tables should not span the full page - keep them readable */
+		.network_table {
+		    max-width: 760px; /* limits width so the table doesn't stretch full page */
+		    /* pin to the left of the page */
+		    margin-left: 0;
+		    margin-right: auto;
+		    width: auto;
+		    table-layout: auto;
+		    word-break: break-word;
+		}
+
 		@page { size: 8.5in 11in; margin-left: 1in; margin-right: 1in; margin-bottom: 0.5in }
 		p { line-height: 115%; text-align: left; orphans: 0; widows: 0; margin-bottom: 0.1in; direction: ltr; background: transparent }
 		h1 { line-height: 100%; text-align: justify; page-break-inside: auto; orphans: 0; widows: 0; margin-top: 0.33in; margin-bottom: 0.08in; direction: ltr; background: transparent; page-break-before: auto; page-break-after: auto }
@@ -85,7 +142,7 @@ Verification Report</font></b></font></p>
 <div class="table_component" role="region" tabindex="0">
 
  <!-- Table with the individual tests  -->
- <table>
+	<table class="network_table">
       <tr><th>Storage Benmarking</th><th></th></tr>
       <tr><th> Banchmark param</th><th>Benachmark value</th></tr>
       <tr><td> Read blocksize, bytes</td>  <td> {{ read.bs }}</td></tr>
@@ -101,6 +158,128 @@ Verification Report</font></b></font></p>
 
 
     </table>
+</div>
+{% endif %}
+
+{% if network_benchmark is defined and network_benchmark | length > 0 %}
+<div class="table_component" role="region" tabindex="0">
+	<h1 class="western">Network benchmarking results</h1>
+
+	<h2>Throughput (iperf3)</h2>
+		<table class="network_table">
+		<caption>Per-client to server throughput measured with iperf3</caption>
+		<tr>
+			<th>Client host</th>
+			<th>Server (ip)</th>
+			<th class="num">Throughput (Mbps)</th>
+		</tr>
+		{% for host, data in network_benchmark.items() %}
+			{% if data.iperf_results is defined and data.iperf_results.results is defined %}
+				{% for it in data.iperf_results.results %}
+					{% set bps = it.stdout | default('0') | float %}
+					{% set mbps = (bps / 1000000.0) | round(2) %}
+					<tr>
+						<td>{{ host }}</td>
+						{# try to resolve the server IP to a hostname using hostvars; fall back to the IP #}
+												{% if ip_to_hostname is defined %}
+													{% set server_name = ip_to_hostname.get(it.item) %}
+												{% else %}
+													{% set server_name = None %}
+												{% endif %}
+												<td>{{ server_name | default(it.item) }}</td>
+						<td class="num">{{ '%.2f'|format(mbps) }} Mbps</td>
+					</tr>
+				{% endfor %}
+			{% else %}
+				<tr><td colspan="3">No iperf3 results for {{ host }}</td></tr>
+			{% endif %}
+		{% endfor %}
+	</table>
+
+	<h2>Ping (average RTT)</h2>
+	<table class="network_table">
+		<caption>Average round-trip time measured with ping (jc)</caption>
+		<tr>
+			<th>Source host</th>
+			<th>Destination</th>
+			<th class="num">Avg RTT (ms)</th>
+		</tr>
+		{% for host, data in network_benchmark.items() %}
+			{% if data.ping_exec is defined and data.ping_exec.results is defined %}
+				{% for it in data.ping_exec.results %}
+					{% set rtt_raw = it.stdout | default('') %}
+					{% if rtt_raw != '' and rtt_raw != 'null' %}
+						{% set rtt = (rtt_raw | float) | round(2) %}
+						<tr>
+							<td>{{ host }}</td>
+							{# try to resolve destination IP to hostname, fall back to IP #}
+														{% if ip_to_hostname is defined %}
+															{% set dest_name = ip_to_hostname.get(it.item) %}
+														{% else %}
+															{% set dest_name = None %}
+														{% endif %}
+														<td>{{ dest_name | default(it.item) }}</td>
+							<td class="num">{{ '%.2f'|format(rtt) }} ms</td>
+						</tr>
+					{% else %}
+						<tr>
+							<td>{{ host }}</td>
+							<td>{{ it.item }}</td>
+							<td class="num">N/A</td>
+						</tr>
+					{% endif %}
+				{% endfor %}
+			{% else %}
+				<tr><td colspan="3">No ping results for {{ host }}</td></tr>
+			{% endif %}
+		{% endfor %}
+	</table>
+</div>
+{% endif %}
+
+{% if conn_results_matrix is defined and conn_results_matrix | length > 0 %}
+<div class="table_component" role="region" tabindex="0">
+	<h1 class="western">Connectivity Matrix</h1>
+
+	<table class="network_table" border="1">
+		<caption>Connectivity Matrix: Packet Loss Percentages Between VMs deployed on the hosts.</caption>
+		<thead>
+			<tr>
+				<th>From \ To</th>
+				{% set all_hosts = conn_results_matrix.keys() | list %}
+				{% for dst in all_hosts %}
+					<th>{{ dst }}</th>
+				{% endfor %}
+			</tr>
+		</thead>
+		<tbody>
+			{% for src in all_hosts %}
+				<tr>
+					<td><b>{{ src }}</b></td>
+					{% for dst in all_hosts %}
+						{% if src == dst %}
+							<td style="background:#eee">—</td>
+						{% else %}
+							{# Find the result dict for src->dst #}
+							{% set result_element = (conn_results_matrix[src] | dict2items | selectattr('key', 'search', dst + '.json$') | map(attribute='value') | list) %}
+							{% if result_element | length != 1 %}
+								<td style="background:yellow">Warning: {{ result_element | length }} results (expected 1)</td>
+							{% else %}
+								{% set result = result_element | first %}
+								{% if result.packet_loss_percent is defined %}
+									<td style="background:{{ 'lightgreen' if result.packet_loss_percent == 0.0 else 'lightcoral' }}">
+										{{ result.packet_loss_percent }}%
+									</td>
+								{% else %}
+									<td style="background:lightcoral">missing</td>
+								{% endif %}
+							{% endif %}
+						{% endif %}
+					{% endfor %}
+				</tr>
+			{% endfor %}
+		</tbody>
+	</table>
 </div>
 {% endif %}
 

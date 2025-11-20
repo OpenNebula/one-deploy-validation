@@ -1,0 +1,21 @@
+---
+- name: Fetch the matrix to localhost
+  set_fact:
+    conn_results_matrix: >-
+      {{
+      dict(
+        groups[node_group | d('node')] | map('extract', hostvars, 'inventory_hostname') | 
+        zip(
+          groups[node_group | d('node')] | map('extract', hostvars, 'conn_results_vector')
+        )
+      )
+      }}
+  no_log: true
+
+- name: Write the whole conn_results_matrix as JSON to a file
+  copy:
+    content: "{{ conn_results_matrix | to_nice_json }}"
+    dest: /tmp/conn-matrix-raw-data.json
+    mode: '0644'
+  delegate_to: localhost
+  become: false

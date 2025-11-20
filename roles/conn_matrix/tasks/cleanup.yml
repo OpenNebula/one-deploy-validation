@@ -1,0 +1,22 @@
+---
+- name: Remove SSH key pair for conn-matrix
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ ansible_env.HOME }}/.ssh/conn-matrix"
+    - "{{ ansible_env.HOME }}/.ssh/conn-matrix.pub"
+
+- name: Remove the tmp directories from the remote hosts
+  ansible.builtin.file:
+    path: "/tmp/conn-matrix-results/"
+    state: absent
+
+- name: Remove the IP address and route added to {{ _conn_matrix_bridge_name }}
+  vars:
+    _my_vm_ip: "{{ host_name_to_vm_ip[hostname_cmd] }}"
+    _mapping_length: "{{ host_name_to_vm_ip | length }}"
+  ansible.builtin.shell: |
+    ip addr del {{ _my_vm_ip | ansible.utils.ipmath(_mapping_length) }}/32 dev {{ _conn_matrix_bridge_name }}
+    ip route del {{ _my_vm_ip }}/32 dev {{ _conn_matrix_bridge_name }}
+  ignore_errors: true

@@ -1,0 +1,31 @@
+---
+- name: Get list of OpenNebula host IDs and names
+  shell: onehost list -l ID,NAME --csv --no-header
+  register: host_ids_and_names
+  changed_when: false
+
+- name: Create a dedicated VM group and VM for each host
+  ansible.builtin.include_tasks: conn_matrix_per_host.yml
+  loop: "{{ host_ids_and_names.stdout_lines }}"
+
+- name: Get VM host to VM IP mapping
+  shell: onevm list -f NAME~conn-mtx-vm-on-host -l HOST,IP --csv --no-header
+  register: vm_host_ip_lines
+  changed_when: false
+
+- name: Extract host to VM IP mapping
+  set_fact:
+    host_name_to_vm_ip: >-
+      {{
+        dict(
+          vm_host_ip_lines.stdout_lines
+          | map('split', ',')
+          | map('first')
+          | map('extract', host_name_to_hostname_cmd)
+          | zip(
+              vm_host_ip_lines.stdout_lines
+              | map('split', ',')
+              | map('last')
+            )
+        )
+      }}

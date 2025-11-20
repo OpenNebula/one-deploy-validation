@@ -1,0 +1,4 @@
+---
+- name: Cleanup VM Groups and VMs
+  ansible.builtin.include_tasks: cleanup_conn_matrix_per_host.yml
+  loop: "{{ host_ids_and_names.stdout_lines }}"

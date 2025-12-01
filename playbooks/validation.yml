@@ -71,13 +71,25 @@
 
 - ansible.builtin.import_playbook: ./vm-ha.yml
 
-- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
-
 # Will launch validation framework on the frontends
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
     - role: validation
 
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tasks:
+    - block:
+        - name: Run OneFlow validation
+          import_role:
+            name: oneflow_validation
+      rescue:
+        - debug:
+            msg: "OneFlow role failed, continue with the rest"
+      always:
+        - debug:
+            msg: "Proceeding to the next role"
+
+- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
 
 # Run FE HA verfification only when variable run_fe_ha is set to true
 - hosts: "{{ frontend_group | d('frontend') }}"
@@ -93,6 +105,7 @@
   become: false
   vars:
     verification_result: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_result | default({'No verification results were found': 'N/A'})}}"
+    verification_comments: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_comments | default({}) }}"
     date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
     validation_vars: "{{ hostvars[groups[frontend_group | d('frontend')][0]].validation | default({}) }}"
   tasks:

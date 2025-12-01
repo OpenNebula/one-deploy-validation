@@ -23,6 +23,9 @@ validation:
         desc: OpenNebula Fireedge GUI
       # Add other services if more should be checked.
     check_fireedge_ui: true
+  # Enable the OneFlow smoke test. It creates a temporary service consisting of 2 VMs.
+  # If set to false (or omitted), this test will not run.
+  run_one_flow: true
 
   # TEST CASE NAME: Storage Benchmark
   # DESCRIPTION: Instantiates a VM for running storage benchmark from it. The VM needs to

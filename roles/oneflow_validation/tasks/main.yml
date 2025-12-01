@@ -1,0 +1,199 @@
+---
+- name: OneFlow | validation block
+  when: validation.run_one_flow | default(false) | bool
+  block:
+  - name: OneFlow | Init OneFlow IDs
+    set_fact:
+      flow_template_id: ""
+      flow_service_id: ""
+      flow_failed: false
+
+  - name: OneFlow | Render temporary service template
+    ansible.builtin.copy:
+      dest: "/tmp/flow-smoke-tpl.json"
+      mode: '0644'
+      content: |
+        {
+          "name": "flow-smoke-svc",
+          "deployment": "straight",
+          "shutdown_action": "terminate-hard",
+          "roles": [
+            {
+              "name": "app",
+              "cardinality": 2,
+              "min_vms": 2,
+              "vm_template": {{ test_vm_template_id }}
+            }
+          ]
+        }
+  
+  - name: OneFlow | Create service template
+    ansible.builtin.shell: oneflow-template create /tmp/flow-smoke-tpl.json
+    args: { executable: /bin/bash }
+    register: flow_tpl_create
+    changed_when: true
+  
+  - name: OneFlow | Parse template ID
+    ansible.builtin.shell: |
+      echo "{{ flow_tpl_create.stdout | default('') }}" | sed -n 's/.*ID:\s*\([0-9]\+\).*/\1/p' | head -1
+    args: { executable: /bin/bash }
+    register: flow_template_id_cmd
+    changed_when: false
+  
+  - name: OneFlow | Store template ID
+    set_fact:
+      flow_template_id: "{{ flow_template_id_cmd.stdout | trim }}"
+
+  - name: OneFlow | Resolve template ID by name (fallback)
+    ansible.builtin.shell: |
+      oneflow-template list | awk '$2=="flow-smoke-svc"{print $1; exit}'
+    register: flow_tpl_id_fallback
+    changed_when: false
+    when: flow_template_id | length == 0
+  
+  - name: OneFlow | Store template ID (fallback)
+    set_fact:
+      flow_template_id: "{{ flow_tpl_id_fallback.stdout | trim }}"
+    when: flow_template_id | length == 0
+
+  - name: OneFlow | Instantiate the service
+    ansible.builtin.shell: oneflow-template instantiate {{ flow_template_id }}
+    args: { executable: /bin/bash }
+    register: flow_svc_instantiate
+    changed_when: true
+  
+  - name: OneFlow | Parse service ID
+    ansible.builtin.shell: |
+      echo "{{ flow_svc_instantiate.stdout | default('') }}" | sed -n 's/.*ID:\s*\([0-9]\+\).*/\1/p' | head -1
+    args: { executable: /bin/bash }
+    register: flow_service_id_cmd
+    changed_when: false
+  
+  - name: OneFlow | Store service ID
+    set_fact:
+      flow_service_id: "{{ flow_service_id_cmd.stdout | trim }}"
+
+  - name: OneFlow | Wait for service state RUNNING
+    ansible.builtin.shell: |
+      oneflow show {{ flow_service_id }} | grep 'SERVICE STATE' | awk '{print $4}'
+    register: flow_state_chk
+    changed_when: false
+    retries: 10 
+    delay: 10
+    until: flow_state_chk.stdout | trim == 'RUNNING'
+
+  - name: OneFlow | Capture OneFlow when state is not RUNNING
+    ansible.builtin.shell: |
+      oneflow show {{ flow_service_id }} | tail -20
+    args: { executable: /bin/bash }
+    register: flow_last_log
+    changed_when: false
+    failed_when: false
+    when:
+      - flow_service_id | length > 0
+      - (flow_state_chk.stdout | trim) != 'RUNNING'
+
+  - name: OneFlow | Mark as failed by state
+    set_fact:
+      flow_failed: true
+      flow_error_msg: >-
+        {{ (flow_last_log.stdout | default('state=' ~ (flow_state_chk.stdout | default('UNKNOWN'))))
+          | regex_replace('\n', ' | ')
+          | trim }}
+    when:
+      - (flow_state_chk.stdout | trim) != 'RUNNING'
+
+  - name: OneFlow | Report smoke summary
+    ansible.builtin.debug:
+      msg:
+        - "Flow template ID = {{ flow_template_id }}"
+        - "Service ID = {{ flow_service_id }}"
+        - "Service state = RUNNING"
+
+  - name: OneFlow | Get VM count
+    ansible.builtin.shell: |
+      oneflow show {{ flow_service_id }} | grep -A5 "ROLE app" | grep CARDINALITY | awk '{print $3}'
+    register: flow_vm_count
+    changed_when: false 
+
+  - name: OneFlow | Store smoke test result
+    set_fact:
+      verification_result: "{{ verification_result | combine({
+        'OneFlow smoke test (service/state/vms)': 
+          'service=' ~ (flow_service_id | default('N/A')) ~
+          ', state=' ~ (flow_state_chk.stdout | default('UNKNOWN')) ~
+          ', vms_qty=' ~ (flow_vm_count.stdout | default('0'))
+      }) }}"
+
+  rescue: 
+  - name: OneFlow | Mark as failed and capture error message
+    set_fact:
+      flow_failed: true
+      flow_error_msg: >-
+        {{ (ansible_failed_result.stderr
+            | default(ansible_failed_result.msg
+            | default(ansible_failed_result.stdout
+            | default('unknown error'))))
+            | regex_replace('\n', ' | ') | trim }}
+
+  always:
+    - name: OneFlow | Store smoke test result (2nd column)
+      set_fact:
+        verification_result: >-
+          {{ verification_result | default({}) | combine({
+            'OneFlow smoke test (service/state/vms)':
+              'service=' ~ (flow_service_id | default('N/A')) ~
+              ', state=' ~ (flow_state_chk.stdout | default('UNKNOWN')) ~
+              ', vms_qty=' ~ (flow_vm_count.stdout | default('0'))
+          }) }}
+
+    - name: OneFlow | Store smoke test comment (3rd column)
+      set_fact:
+        verification_comments: >-
+          {{ verification_comments | default({}) | combine({
+            'OneFlow smoke test (service/state/vms)': (
+              flow_failed | default(false)
+              | ternary(
+                  'service state=' ~ (flow_state_chk.stdout | default('UNKNOWN')),
+                  ''
+                )
+            )
+          }) }}
+
+    - name: OneFlow | Cleanup service (detect state)
+      ansible.builtin.shell: |
+        oneflow show {{ flow_service_id }} | awk '/SERVICE STATE/{print $4}'
+      args: { executable: /bin/bash }
+      register: flow_state_for_cleanup
+      changed_when: false
+      failed_when: false
+      when:
+        - flow_service_id is defined
+        - (flow_service_id | trim) is match('^[0-9]+$')
+
+    - name: OneFlow | Cleanup service (recover --delete for FAILED_*)
+      ansible.builtin.shell: |
+        oneflow recover --delete {{ flow_service_id }}
+      args: { executable: /bin/bash }
+      when:
+        - flow_service_id is defined
+        - (flow_service_id | trim) is match('^[0-9]+$')
+        - (flow_state_for_cleanup.stdout | lower) is search('failed')
+      ignore_errors: yes
+
+    - name: OneFlow | Cleanup service (normal delete)
+      ansible.builtin.shell: |
+        oneflow delete {{ flow_service_id }}
+      args: { executable: /bin/bash }
+      when:
+        - flow_service_id is defined
+        - (flow_service_id | trim) is match('^[0-9]+$')
+        - not ((flow_state_for_cleanup.stdout | lower) is search('failed'))
+      ignore_errors: yes
+
+    - name: OneFlow | Cleanup temporary template
+      ansible.builtin.shell: oneflow-template delete {{ flow_template_id }}
+      args: { executable: /bin/bash }
+      when:
+        - flow_template_id is defined
+        - (flow_template_id | trim) is match('^[0-9]+$')

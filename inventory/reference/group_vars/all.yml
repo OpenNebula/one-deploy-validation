@@ -13,6 +13,9 @@ update_pkg_cache: true
 one_version: '6.10'
 one_pass: 'a341dbcf62df066e011ab0aabf785ab6'
 
+# ansible key to use
+ansible_ssh_private_key_file: '~/.ssh/oneadmin_key'
+
 validation:
 
   # TEST CASE NAME: Core Services
@@ -43,7 +46,7 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_storage_benchmark: true
   storage_benchmark:
-    vnet_name: vxlan
+    vnet_name: evpn0
 
   # TEST CASE NAME: Network Benchmark
   # DESCRIPTION: Runs an iperf bandwidth and ping benchmark between all hypervisor hosts
@@ -64,9 +67,9 @@ validation:
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
   run_conn_matrix: true
   conn_matrix:
-    bridge_name: br-test
+    bridge_name: onebr0
     ping_count: 10
-    vnet_name: VLAN_580
+    vnet_name: evpn0
     market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: VM instantiation
@@ -86,9 +89,9 @@ validation:
           SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
           TOKEN="YES" 
         ]
-    create_vnet: true
+    create_vnet: false
     vnet:
-      name: 'tes-vnet'
+      name: 'evpn0'
       desc: 'A test network for post-deployment cloud verification'
       bridge: 'br-test'
       vn_mad: 'dummy'

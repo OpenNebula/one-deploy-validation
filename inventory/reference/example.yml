@@ -1,9 +1,11 @@
 ---
 all: {}
+
 frontend:
   hosts:
-    u22: { ansible_host: 10.2.11.200 }
+    fe: { ansible_host: 172.20.0.3 }
 
 node:
   hosts:
-    u22: { ansible_host: 10.2.11.200 }
+    h1: { ansible_host: 172.20.0.4 }
+    h2: { ansible_host: 172.20.0.5 }

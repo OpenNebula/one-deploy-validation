@@ -10,10 +10,22 @@
 ###
 - name: Run Storage benchmark test
   block:
+  - name: Get VM template as JSON
+    ansible.builtin.shell: >
+      onetemplate show "{{ validation.test_vm.vm.market_name }}" -j
+    register: image_output
+    failed_when: "image_output.rc != 0 and image_output.stdout == ''"
+    when: test_vm_template_image_id is not defined
+
+  - name: Set `test_vm_template_image_id` from template JSON
+    ansible.builtin.set_fact:
+      test_vm_template_image_id: "{{ image_output.stdout | from_json | json_query('VMTEMPLATE.TEMPLATE.DISK.IMAGE_ID') }}"
+    when: image_output is defined and (test_vm_template_image_id is not defined)
+
   - name: Instantiate benchmark VM
     ansible.builtin.shell: >
-      onetemplate instantiate {{ test_vm_template_id }} --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=3000 --mem 1g
-    #onetemplate instantiate {{ test_vm_template_id }} --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=10000 --mem 2g
+      onetemplate instantiate "{{ validation.test_vm.vm.market_name }}" --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=3000 --mem 1g
+    #onetemplate instantiate {{ validation.test_vm.vm.market_name }} --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=10000 --mem 2g
     register: benchmarkvm_id
     failed_when: "benchmarkvm_id.rc != 0"
     # retry for robustness, e.g. in case we can only have 1 test VM running at a time for some reason, previous one is still shutting down.
@@ -33,7 +45,7 @@
     ansible.builtin.shell: >
       onevm list --f ID={{benchmarkvm_id.stdout.split(':')[1] | trim}} -l IP --no-header
     register: vm_ip
-    failed_when: "vm_state.rc != 0"
+    failed_when: "vm_ip.rc != 0"
 
   - name: Verify ssh connection to the benchmark VM
     ansible.builtin.shell: >

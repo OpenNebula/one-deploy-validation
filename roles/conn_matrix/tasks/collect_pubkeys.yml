@@ -17,3 +17,4 @@
         )
       }}
   no_log: true
+  # This task runs on the frontend primary (see main.yml condition).

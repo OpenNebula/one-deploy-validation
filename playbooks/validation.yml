@@ -28,7 +28,7 @@
     - role: test_vm
       when: validation.run_test_vm | d(true)
     - role: storage-benchmark
-      when: validation.run_test_vm | d(true)
+      when: validation.run_storage_benchmark | d(true)
   tasks:
     # Only execute these steps on a single frontend host
     - when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
@@ -62,7 +62,7 @@
               }}
 
 # Run connectivity tests between virtual machines
-- hosts: "{{ node_group | d('node') }},{{ frontend_group | d('frontend') }},localhost"
+- hosts: "{{ node_group | d('node') }},{{ frontend_group | d('frontend') }}"
   gather_facts: true
   roles:
     - role: conn_matrix
@@ -116,6 +116,14 @@
       ansible.builtin.set_fact:
         network_benchmark: "{{ network_benchmark | default({}) | combine({ item: {'iperf_results': hostvars[item].iperf_results | default(None), 'ping_exec': hostvars[item].ping_exec | default(None)} }) }}"
       loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Collect storage benchmark results from frontend hosts
+      # Build a map of frontend -> { read, write } so the report can render them
+      ansible.builtin.set_fact:
+        storage_benchmark: "{{ storage_benchmark | default({}) | combine({ item: {'write': hostvars[item].write | default(None), 'read': hostvars[item].read | default(None)} }) }}"
+      loop: "{{ groups[frontend_group | d('frontend')] }}"
       loop_control:
         label: "{{ item }}"
 

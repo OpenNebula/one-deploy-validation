@@ -2,7 +2,11 @@
 - name: Set host_id and ssh_public_key for this iteration
   ansible.builtin.set_fact:
     host_id: "{{ item.split(',')[0] }}"
-    ssh_public_key: "{{ hostvars['localhost']['conn_matrix_pubkeys'][host_name_to_hostname_cmd[item.split(',')[1]]] }}"
+    ssh_public_key: >-
+      {{
+        hostvars[ groups[ frontend_group | d('frontend') ][0] ]
+        ['conn_matrix_pubkeys'][ host_name_to_hostname_cmd[item.split(',')[1]] ]
+      }}
 
 - name: "Host id: {{ host_id }} -- Render vm group template"
   template:

@@ -6,17 +6,18 @@
       block:
       - name: Cleanup test template
         ansible.builtin.shell: |
-          onetemplate delete -R {{ test_vm_template_id }}
+          # onetemplate delete -R {{ test_vm_template_id }}
         register: cleanup_result
         failed_when: "cleanup_result.rc != 0"
 
       - name: Cleanup test image
         ansible.builtin.shell: |
-          oneimage delete {{ test_vm_template_image_id }}
+          # oneimage delete {{ test_vm_template_image_id }}
         register: cleanup_result
         failed_when: "cleanup_result.rc != 0 and 'Error getting image' not in cleanup_result.stderr"
         retries: 10
         delay: 10
+        ignore_errors: true
 
       - name: Remove /tmp/test_vm_template_extra.txt from remote host
         ansible.builtin.file:

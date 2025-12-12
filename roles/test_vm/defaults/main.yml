@@ -1,5 +1,5 @@
 ---
-_test_vm_name: VALIDATION_TEST_VM
+_test_vm_name: "{{ validation.test_vm.vm.market_name | d('Alpine Linux 3.21') }}"
 # Vars for the test network
 validation:
   test_vm:

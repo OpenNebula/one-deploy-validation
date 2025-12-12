@@ -96,8 +96,6 @@
 <h2 class="western">Metadata</h2>
 <p><b>Report generated:</b> {{ date }}</p>
 <p><b>Repository version:</b> {{ repo_version }}</p>
-<p><b>Variables used for the validation: </b></p>
-<pre>{{ validation_vars | to_nice_yaml }}</pre>
 
 <h2 class="western"><a name="_cgnw9t1vnxc8"></a> Verification of the OpenNebula cloud</h2></br>
 
@@ -355,6 +353,9 @@
 	</table>
 </div>
 {% endif %}
+
+<h2 class="western">Variables used for the validation</h2>
+<pre>{{ validation_vars | to_nice_yaml }}</pre>
 
 </body>
 </html>

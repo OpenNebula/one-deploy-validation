@@ -1,20 +1,6 @@
 ---
 - hosts: all
   tasks:
-    - name: Set playbook variables for Connectivity Matrix
-      set_fact:
-        _conn_matrix_bridge_name: "{{ validation.conn_matrix.bridge_name | d('br-default') }}"
-        _conn_matrix_ping_count: "{{ validation.conn_matrix.ping_count | d(10) }}"
-        _conn_matrix_vnet_name: "{{ validation.conn_matrix.vnet_name | d('vnet-default') }}"
-
-    - name: Set playbook variables for test VM
-      set_fact:
-        _test_vm_name: "{{ validation.test_vm.vm.market_name | d('Alpine Linux 3.21') }}"
-        # NOTE: Optional parameters, can be overridden in the inventory file
-        # validation.test_vm.vm.template_extra: |
-        #    MEMORY=256
-      when: validation.run_test_vm | d(true)
-
     - name: Save the output of the hostname command to the hostname variable
       ansible.builtin.shell: hostname
       register: hostname_cmd

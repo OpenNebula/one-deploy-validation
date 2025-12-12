@@ -6,8 +6,6 @@
   retries: 10
   delay: 10
 
-# NOTE: test_vm_template_id variable is managed by a separate playbook
-# ESTO ES UN PUTO LIO (ahora un poco menos :) )
 - name: Instantiate test VM
   ansible.builtin.shell: >
     onetemplate instantiate {{ test_vm_template_id }} 

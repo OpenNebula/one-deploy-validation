@@ -1,68 +1,22 @@
 ---
 - hosts: all
-  tasks:
-    - name: Set playbook variables for Connectivity Matrix
-      set_fact:
-        _conn_matrix_bridge_name: "{{ validation.conn_matrix.bridge_name | d('br-default') }}"
-        _conn_matrix_ping_count: "{{ validation.conn_matrix.ping_count | d(10) }}"
-        _conn_matrix_vnet_name: "{{ validation.conn_matrix.vnet_name | d('vnet-default') }}"
-
-    - name: Set playbook variables for test VM
-      set_fact:
-        _test_vm_name: "{{ validation.test_vm.vm.market_name | d('Alpine Linux 3.21') }}"
-        # NOTE: Optional parameters, can be overridden in the inventory file
-        # validation.test_vm.vm.template_extra: |
-        #    MEMORY=256
-      when: validation.run_test_vm | default(true)
-
-    - name: Save the output of the hostname command to the hostname variable
-      ansible.builtin.shell: hostname
-      register: hostname_cmd
-
-    - name: Set fact with hostname
-      set_fact:
-        hostname_cmd: "{{ hostname_cmd.stdout }}"
-
-- ansible.builtin.import_playbook: ./prepare-test-vm-template.yml
+  roles:
+    - role: validation_common
 
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
     - role: test_vm
-      when: validation.run_test_vm | default(true)
+      when: validation.run_test_vm | d(true)
     - role: storage-benchmark
-  tasks:
-    # Only execute these steps on a single frontend host
-    - when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
-      block:
-        - name: Get list of OpenNebula host to "hostname_cmd" mapping
-          shell: onehost list -j
-          register: host_list_json
-          changed_when: false
-          no_log: true
+      when: validation.run_storage_benchmark | d(true)
+    - role: validation_frontend
 
-        - name: Extract HOST raw (may be mapping or list)
-          set_fact:
-            host_raw: "{{ (host_list_json.stdout | from_json).HOST_POOL.HOST | default([]) }}"
-
-        - name: Normalize HOST list (always a list)
-          set_fact:
-            host_list: "{{ [host_raw] if (host_raw is mapping) else (host_raw | default([])) }}"
-
-        - name: Set fact with host to 'hostname_cmd' mapping
-          set_fact:
-            host_name_to_hostname_cmd: >-
-              {{
-                dict(
-                  (host_list | map(attribute='NAME'))
-                  | zip(
-                      host_list
-                      | map(attribute='TEMPLATE')
-                      | map(attribute='HOSTNAME')
-                    )
-                )
-              }}
-
-- ansible.builtin.import_playbook: ./conn-matrix.yml
+# Run connectivity tests between virtual machines
+- hosts: "{{ node_group | d('node') }},{{ frontend_group | d('frontend') }}"
+  gather_facts: true
+  roles:
+    - role: conn_matrix
+      when: validation.run_conn_matrix | d(true)
 
 # Run network tests on the hypervisor hosts
 - hosts: "{{ node_group | d('node') }}"
@@ -71,7 +25,10 @@
 
 - ansible.builtin.import_playbook: ./vm-ha.yml
 
-- ansible.builtin.import_playbook: ./cleanup-test-vm-template.yml
+# Cleanup the test VMs
+- hosts: "{{ frontend_group | d('frontend') }}"
+  roles:
+    - role: cleanup_test_vm
 
 # Will launch validation framework on the frontends
 - hosts: "{{ frontend_group | d('frontend') }}"
@@ -104,12 +61,38 @@
       register: repo_version_cmd
       changed_when: false
 
+    - name: Collect network benchmark results from node hosts
+      # Build a map of node -> { iperf_results, ping_exec } so the report can render them
+      ansible.builtin.set_fact:
+        network_benchmark: "{{ network_benchmark | default({}) | combine({ item: {'iperf_results': hostvars[item].iperf_results | default(None), 'ping_exec': hostvars[item].ping_exec | default(None)} }) }}"
+      loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Collect storage benchmark results from frontend hosts
+      # Build a map of frontend -> { read, write } so the report can render them
+      ansible.builtin.set_fact:
+        storage_benchmark: "{{ storage_benchmark | default({}) | combine({ item: {'write': hostvars[item].write | default(None), 'read': hostvars[item].read | default(None)} }) }}"
+      loop: "{{ groups[frontend_group | d('frontend')] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Build IP -> hostname mapping for report
+      ansible.builtin.set_fact:
+        ip_to_hostname: "{{ ip_to_hostname | default({}) | combine({ (hostvars[item].get('ansible_host')): item }) }}"
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].get('ansible_host', '') != ''
+      loop_control:
+        label: "{{ item }}"
+
     - name: Render report
       template:
         src: "appendix-cloud-report.j2"
         dest: /tmp/cloud_verification_report.html
       vars:
         repo_version: "{{ repo_version_cmd.stdout }}"
+        # pass collected network benchmark results to the template
+        network_benchmark: "{{ network_benchmark | default({}) }}"
 
     - name: Print report location
       ansible.builtin.debug:

@@ -1,117 +1,22 @@
 ---
+ 
+- name: "Preparation tasks"
+  ansible.builtin.include_tasks:
+    file: prepare.yml
+  when: validation.run_test_vm | default(true) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
 
-- name: Create vnet
-  when: validation.test_vm.create_vnet
-  block:
-    - name: Verify connection to the VNET default gateway
-      ansible.builtin.shell: >
-        ping -c 2 {{ validation.test_vm.vnet.gateway }}
-      register: gw_ping_result
-      until: gw_ping_result.rc == 0
-      retries: 10
-      delay: 10
-      when: validation.test_vm.vm.check_connection
+- name: Network related tasks
+  ansible.builtin.include_tasks:
+    file: network.yml
 
-    - name: Render vnet config
-      template:
-        src: test_vnet.j2
-        dest: /var/tmp/vnet_{{ validation.test_vm.vnet.name }}.template
+- name: VM creation related tasks
+  ansible.builtin.include_tasks:
+    file: create_vm.yml
 
-    - name: Create network
-      ansible.builtin.shell: >
-        onevnet create /var/tmp/vnet_{{ validation.test_vm.vnet.name }}.template
-      register: test_network
-      failed_when: "test_network.rc != 0"
+- name: Test connectivity
+  ansible.builtin.include_tasks:
+    file: connect.yml
 
-    - name: Delete vnet definition
-      file:
-        path: /var/tmp/vnet_{{ validation.test_vm.vnet.name }}.template
-        state: absent
-
-    - name: Verify test network creation
-      set_fact:
-        verification_result: "{{ (verification_result | default({})) | combine({'Test network creation' : 'ok'}) }}"
-
-- name: Verify that VM image is in ready state
-  ansible.builtin.shell: >
-    oneimage list --f ID={{ test_vm_template_image_id }} -l STAT --no-header
-  register: image_state
-  until: image_state.stdout in [ 'rdy', 'used' ]
-  retries: 10
-  delay: 10
-
-# NOTE: test_vm_template_id variable is managed by a separate playbook
-- name: Instantiate test VM
-  ansible.builtin.shell: >
-    onetemplate instantiate {{ test_vm_template_id }} 
-  register: vm_id
-  failed_when: "vm_id.rc != 0" 
-
-- name: Wait for VM come up
-  ansible.builtin.shell: >
-    onevm list --f ID={{vm_id.stdout.split(':')[1] | trim}} -l STAT --no-header
-  register: vm_state
-  failed_when: "vm_state.rc != 0"
-  until: vm_state.stdout == "runn"
-  retries: 10
-  delay: 10
-
-- name: Verify test VM
-  set_fact:
-    verification_result: "{{ (verification_result | default({})) | combine({'Test VM instantiation' : 'ok' }) }}"
-
-- name: Check connection to VM
-  when: validation.test_vm.vm.check_connection
-  block:
-  - name: Attach NIC to test VM
-    ansible.builtin.shell: >
-      onevm nic-attach -n '{{ validation.test_vm.vnet.name }}' {{ vm_id.stdout.split(':')[1] | trim }}
-
-  - name: Wait until NIC is attached
-    ansible.builtin.shell: >
-      onevm show -j {{vm_id.stdout.split(':')[1]}} | jq -r .VM.STATE  
-    register: vm_state_result
-    until: vm_state_result.stdout is search('3')
-    retries: 10
-    delay: 5
-
-  - name: Get VM IP
-    ansible.builtin.shell: >
-      onevm list --f ID={{vm_id.stdout.split(':')[1] | trim}} -l IP --no-header
-    register: vm_ip
-    failed_when: "vm_state.rc != 0"
-  
-  - name: Verify connection to the test VM
-    ansible.builtin.shell: >
-      ping -c 2 {{ vm_ip.stdout }}
-    register: vm_ping_result
-    until: vm_ping_result.rc == 0
-    retries: 10
-    delay: 10
-  
-  - name: Record connection status to test VM
-    set_fact:
-      verification_result: "{{ verification_result | combine({'Connection to the test VM instance' : 'ok' }) }}"
-
-- name: Delete test VM
-  ansible.builtin.shell: |
-    onevm terminate --hard {{vm_id.stdout.split(':')[1]}}
-  register: cleanup_result
-  failed_when: "cleanup_result.rc != 0"
-
-- name: Wait until the test VM is deleted
-  ansible.builtin.shell: >
-    onevm show -j {{vm_id.stdout.split(':')[1]}} | jq -r .VM.STATE  
-  register: vm_state_result
-  until: vm_state_result.stdout is search('6')
-  retries: 10
-  delay: 10
-
-# Delete test network only when it was created by us
-#
-- name: Cleanup created test network
-  ansible.builtin.shell: |
-    onevnet delete "{{ validation.test_vm.vnet.name }}"
-  register: cleanup_result
-  failed_when: "cleanup_result.rc != 0"
-  when: validation.test_vm.create_vnet and not validation.test_vm.vm.check_connection
+- name: Cleanup things
+  ansible.builtin.include_tasks:
+    file: cleanup.yml

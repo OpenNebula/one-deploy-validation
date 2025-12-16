@@ -1,0 +1,8 @@
+---
+- name: Save the output of the hostname command to the hostname variable
+  ansible.builtin.shell: hostname
+  register: hostname_cmd
+
+- name: Set fact with hostname
+  set_fact:
+    hostname_cmd: "{{ hostname_cmd.stdout }}"

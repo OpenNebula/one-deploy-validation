@@ -7,3 +7,5 @@ __pycache__/
 .vscode
 .ansible/
 inventory/reference/local-ha.yml
+collections/
+.venv/

@@ -1,37 +1,11 @@
 ---
-all:
-  vars:
-    ansible_user: root
-    ensure_keys_for: [root]
-
-    ensure_hostname: true
-    ensure_hosts: true
-
-    unattend_disable: true
-    update_pkg_cache: true
-
-    one_version: '6.10'
-    one_pass: 'opennebula'
-
-    vn:
-      service:
-        managed: true
-        template:
-          VN_MAD: bridge
-          BRIDGE: br0
-          AR:
-            TYPE: IP4
-            IP: 10.2.11.100
-            SIZE: 100
-          NETWORK_ADDRESS: 10.2.11.0
-          NETWORK_MASK: 24
-          GATEWAY: 10.2.11.1
-          DNS: 1.1.1.1
+all: {}
 
 frontend:
   hosts:
-    u22: { ansible_host: 10.2.11.200 }
+    fe: { ansible_host: 172.20.0.3 }
 
 node:
   hosts:
-    u22: { ansible_host: 10.2.11.200 }
+    h1: { ansible_host: 172.20.0.4 }
+    h2: { ansible_host: 172.20.0.5 }

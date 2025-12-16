@@ -1,0 +1,68 @@
+---
+- name: Install ping dependencies
+  ansible.builtin.package:
+    name:
+      - jc
+      - jq
+    state: present
+
+- name: Fetch host_name_to_vm_ip mapping from the first frontend node
+  set_fact:
+    host_name_to_vm_ip: "{{ hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_vm_ip'] }}"
+  when: hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_vm_ip'] is defined
+
+- name: Add VM IP+offset/32 to {{ _conn_matrix_bridge_name }} and route for each VM IP
+  vars:
+    _mapping_length: "{{ host_name_to_vm_ip | length }}"
+  register: add_vm_ip_route
+  failed_when: "('Address already assigned' not in add_vm_ip_route.stderr or add_vm_ip_route.rc != 2) \
+                and add_vm_ip_route.rc != 0\
+                and ('File exists' not in add_vm_ip_route.stderr or add_vm_ip_route.rc != 2)"
+  changed_when: add_vm_ip_route.rc == 0
+  ansible.builtin.shell: |
+    ip addr add {{ host_name_to_vm_ip[hostname_cmd] | ansible.utils.ipmath(_mapping_length) }}/32 dev {{ _conn_matrix_bridge_name }}
+    ip route add {{ host_name_to_vm_ip[hostname_cmd] }}/32 dev {{ _conn_matrix_bridge_name }}
+
+- name: Ensure results directory exists for this host
+  file:
+    path: "/tmp/conn-matrix-results/{{ inventory_hostname }}"
+    state: directory
+    mode: '0755'
+
+- name: Test connectivity from this host to all other VMs
+  vars:
+    _my_vm_ip: "{{ host_name_to_vm_ip[hostname_cmd] }}"
+    _other_hostname: "{{ groups[node_group | d('node')] | map('extract', hostvars) | selectattr('hostname_cmd', 'equalto', other_vm.key) | map(attribute='inventory_hostname') | list | first}}"
+  loop: "{{ host_name_to_vm_ip | dict2items }}"
+  loop_control:
+    loop_var: other_vm
+  when: other_vm.value != _my_vm_ip
+  ansible.builtin.shell: |
+    ssh -i ~/.ssh/conn-matrix -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{{ _my_vm_ip }} -- \
+      ping -c {{ _conn_matrix_ping_count }} {{ other_vm.value }} | jc --ping > /tmp/conn-matrix-results/{{ inventory_hostname }}/{{ _other_hostname }}.json
+  register: conn_test_result
+  retries: 3
+  delay: 5
+  until: "'Connection refused' not in conn_test_result.stderr and 'No route to host' not in conn_test_result.stderr"
+
+- name: Read the results of the connection matrix test
+  vars:
+    _my_vm_ip: "{{ host_name_to_vm_ip[hostname_cmd] }}"
+    _other_hostname: "{{ groups[node_group | d('node')] | map('extract', hostvars) | selectattr('hostname_cmd', 'equalto', other_vm.key) | map(attribute='inventory_hostname') | list | first}}"
+  ansible.builtin.slurp:
+    src: "/tmp/conn-matrix-results/{{ inventory_hostname }}/{{ _other_hostname }}.json"
+  loop: "{{ host_name_to_vm_ip | dict2items }}"
+  loop_control:
+    loop_var: other_vm
+  when: other_vm.value != _my_vm_ip
+  register: slurped_files
+  no_log: true
+
+- name: Build a dictionary of file contents
+  set_fact:
+    conn_results_vector: >- 
+      {{ dict(
+          slurped_files.results | selectattr('source', 'defined') | map(attribute='source') | 
+          zip(slurped_files.results | selectattr('source', 'defined') | map(attribute='content') | map('b64decode') | map('from_json'))
+        )
+      }}

@@ -1,4 +1,5 @@
 ---
+_test_vm_name: "{{ validation.test_vm.vm.market_name | d('Alpine Linux 3.21') }}"
 # Vars for the test network
 validation:
   test_vm:
@@ -8,17 +9,22 @@ validation:
       check_connection: true
       market_name: 'Alpine Linux 3.21'
       template_extra: |
-        MEMORY="512"
+        MEMORY="256"
+        CONTEXT=[
+          NETWORK="YES",
+          REPORT_READY="YES",
+          SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
+          TOKEN="YES" ]
     vnet:
       name: 'VLAN_580'
       desc: 'A test network for post-deployment cloud verification'
       bridge: 'br-test'
       vn_mad: 'dummy'
-      phydev: ''
+      phydev: 'eth1'
       network_address: '10.0.0.0'
       network_mask: '255.255.255.0'
       dns: '8.8.8.8'
-      gateway: '10.0.0.1'
+      gateway: '10.0.0.254'
       ar:
         - type: "IP4"
           ip: '10.0.0.10'

@@ -3,7 +3,10 @@ NAME        = "{{ validation.test_vm.vnet.name }}"
 DESCRIPTION = "{{ validation.test_vm.vnet.desc }}"
 
 VN_MAD = {{ validation.test_vm.vnet.vn_mad }}
+
+{% if validation.test_vm.vnet.bridge is not none %}
 BRIDGE = {{ validation.test_vm.vnet.bridge | d('br-test') }}
+{% endif %}
 
 {% if validation.test_vm.vnet.phydev is not none %}
 PHYDEV = {{ validation.test_vm.vnet.phydev }}

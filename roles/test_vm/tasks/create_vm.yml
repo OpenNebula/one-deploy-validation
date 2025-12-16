@@ -1,0 +1,28 @@
+- name: Verify that VM image is in ready state
+  ansible.builtin.shell: >
+    oneimage list --f ID={{ test_vm_template_image_id }} -l STAT --no-header
+  register: image_state
+  until: image_state.stdout in [ 'rdy', 'used' ]
+  retries: 10
+  delay: 10
+
+- name: Instantiate test VM
+  ansible.builtin.shell: >
+    onetemplate instantiate {{ test_vm_template_id }} 
+  register: vm_id
+  failed_when: "vm_id.rc != 0" 
+
+- name: Wait for VM come up
+  ansible.builtin.shell: >
+    onevm list --f ID={{vm_id.stdout.split(':')[1] | trim}} -l STAT --no-header
+  register: vm_state
+  failed_when: "vm_state.rc != 0"
+  until: vm_state.stdout == "runn"
+  retries: 10
+  delay: 10
+
+- name: Verify test VM
+  set_fact:
+    verification_result: "{{ (verification_result | default({})) | combine({'Test VM instantiation' : 'ok' }) }}"
+
+

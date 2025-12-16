@@ -1,0 +1,4 @@
+---
+_conn_matrix_bridge_name: "{{ validation.conn_matrix.bridge_name | d('br-conn-matrix') }}"
+_conn_matrix_ping_count: "{{ validation.conn_matrix.ping_count | d(3) }}"
+_conn_matrix_vnet_name: "{{ validation.conn_matrix.vnet_name | d('vnet-default') }}"

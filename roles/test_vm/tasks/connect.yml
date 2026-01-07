@@ -38,6 +38,7 @@
     ansible.builtin.shell: >
       ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} onegate vm show
     register: vm_onegate_result
+    ignore_errors: true
 
   - name: Show last result
     ansible.builtin.debug:

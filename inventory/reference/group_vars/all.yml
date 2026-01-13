@@ -119,6 +119,7 @@ validation:
       interface_name: 'br-test'
     fencing_check_retries: 8
     fencing_check_delay: 60
+    vm_market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: Front-end High Availability
   # DESCRIPTION: The prerequisite is to have the Front-end HA configured, see details in OpenNebula documentation.

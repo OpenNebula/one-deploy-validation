@@ -1,0 +1,136 @@
+---
+# Only execute these steps on a single frontend host AND when VM HA validation is enabled
+- name: Get last timestamp from host_error.log before test
+  ansible.builtin.shell: |
+    if [ -s /var/log/one/host_error.log ]; then
+      awk -F'[][]' '/^[[]/{ts=$2} END{if(ts) print ts}' /var/log/one/host_error.log
+    else
+      echo ""
+    fi
+  register: last_host_error_timestamp
+  changed_when: false
+
+- name: Force status update to notice the error quicker
+  ansible.builtin.command: onehost forceupdate {{ host_id }}
+  register: forceupdate_result
+  changed_when: false
+  failed_when: forceupdate_result.rc != 0
+  become: true
+  become_user: oneadmin
+
+- name: Wait for error state on the host
+  ansible.builtin.shell: >
+    onehost list --f ID={{ host_id }} -l STAT --no-header
+  register: host_state
+  failed_when: "host_state.rc != 0"
+  until: host_state.stdout == "err"
+  retries: 30
+  delay: 5
+
+- name: Save host error detection
+  set_fact:
+    verification_result: "{{ (verification_result | default({})) | combine({'VM HA: host error detected on host': host_name }) }}"
+
+- name: Check that the hook is triggered (after last timestamp)
+  ansible.builtin.shell: |
+    awk -F'[][]' -v last_ts="{{ last_host_error_timestamp.stdout | trim }}" '
+      BEGIN{found=last_ts==""}
+      /^[[]/{
+        if($2==last_ts) found=1; else if(found && $0 ~ /Hook launched/) print $0
+      }' /var/log/one/host_error.log | grep "Hook launched"
+  register: hook_log_check
+  failed_when: hook_log_check.rc != 0
+  changed_when: false
+  retries: 10
+  delay: 10
+
+- name: Save hook triggered
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VM HA: error hook triggered': 'ok'}) }}"
+
+- name: Check that the fencing gets triggered (this might take several minutes, after last timestamp)
+  ansible.builtin.shell: |
+    awk -F'[][]' -v last_ts="{{ last_host_error_timestamp.stdout | trim }}" '
+      BEGIN{found=last_ts==""}
+      /^[[]/{
+        if($2==last_ts) found=1; else if(found && $0 ~ /Fencing enabled/) print $0
+      }' /var/log/one/host_error.log | grep "Fencing enabled"
+  register: fencing_log_check
+  failed_when: fencing_log_check.rc != 0
+  changed_when: false
+  retries: "{{ _fencing_check_retries }}"
+  delay: "{{ _fencing_check_delay }}"
+  until: fencing_log_check.rc == 0
+
+- name: Save fencing triggered
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VM HA: host fencing triggered on host': host_name }) }}"
+
+- name: Check for "Fencing success" in host_error.log (after last timestamp)
+  ansible.builtin.shell: |
+    awk -F'[][]' -v last_ts="{{ last_host_error_timestamp.stdout | trim }}" '
+      BEGIN{found=last_ts==""}
+      /^[[]/{
+        if($2==last_ts) found=1; else if(found && $0 ~ /Fencing success/) print $0
+      }' /var/log/one/host_error.log | grep "Fencing success"
+  register: fencing_success_log_check
+  failed_when: fencing_success_log_check.rc != 0
+  changed_when: false
+  retries: 5
+  delay: 5
+  until: fencing_success_log_check.rc == 0
+
+- name: Save fencing success
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VM HA: host fencing successful on host': host_name }) }}"
+
+- name: Check for "Hook finished" in host_error.log (after last timestamp)
+  ansible.builtin.shell: |
+    awk -F'[][]' -v last_ts="{{ last_host_error_timestamp.stdout | trim }}" '
+      BEGIN{found=last_ts==""}
+      /^[[]/{
+        if($2==last_ts) found=1; else if(found && $0 ~ /Hook finished/) print $0
+      }' /var/log/one/host_error.log | grep "Hook finished"
+  register: hook_finished_log_check
+  failed_when: hook_finished_log_check.rc != 0
+  changed_when: false
+  retries: 5
+  delay: 5
+  until: hook_finished_log_check.rc == 0
+
+- name: Save hook finished
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VM HA: error hook successful': 'ok'}) }}"
+
+- name: Wait for VM to be in running state on a new host
+  ansible.builtin.shell: >
+    onevm list --f ID={{ test_vm_ha_id }} -l STAT --no-header
+  register: vm_state
+  failed_when: "vm_state.rc != 0 or vm_state.stdout != 'runn'"
+  until: vm_state.stdout == "runn"
+  retries: 10
+  delay: 10
+
+- name: Get new VM hostname after recovery
+  ansible.builtin.shell: >
+    onevm list --f ID={{ test_vm_ha_id }} -l HOST --no-header
+  register: new_vm_hostname
+  failed_when: "new_vm_hostname.rc != 0"
+
+- name: Save VM recovery success on new host
+  set_fact:
+    verification_result: "{{ verification_result | combine({'VM HA: VM recovered successfully on host': new_vm_hostname.stdout}) }}"
+
+- name: Delete test VM
+  ansible.builtin.shell: |
+    onevm terminate --hard {{ test_vm_ha_id }}
+  register: cleanup_result
+  failed_when: "cleanup_result.rc != 0"
+
+- name: Wait until the test VM is deleted
+  ansible.builtin.shell: >
+    onevm show -j {{ test_vm_ha_id }} | jq -r .VM.STATE  
+  register: vm_state_result
+  until: vm_state_result.stdout is search('6')
+  retries: 10
+  delay: 10

@@ -23,7 +23,13 @@
   roles:
     - role: network-benchmark
 
-- ansible.builtin.import_playbook: ./vm-ha.yml
+# VM HA Validation
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tasks:
+    - name: VM HA Validation
+      include_role:
+        name: vm-ha
+      when: validation.run_vm_ha | d(false)
 
 # Cleanup the test VMs
 - hosts: "{{ frontend_group | d('frontend') }}"
@@ -35,13 +41,10 @@
   roles:
     - role: validation
 
-
-# Run FE HA verfification only when variable run_fe_ha is set to true
+# Run FE HA verification only when variable run_fe_ha is set to true
 - hosts: "{{ frontend_group | d('frontend') }}"
-  tasks:
-    - name: Import fe-ha playbook
-      import_playbook:
-        name: fe-ha
+  roles:
+    - role: fe_ha
       when: validation.run_fe_ha == true
 
 # Render verification report

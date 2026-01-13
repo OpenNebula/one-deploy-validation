@@ -1,57 +1,55 @@
 ---
 # Only execute these steps on a single frontend host AND when VM HA validation is enabled
-- when: (hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host)
-  block:
-  - name: Download test VM template and image from the Marketplace
-    ansible.builtin.shell: |
-      onemarketapp export $(onemarketapp list -f NAME='{{ _test_vm_ha_name }}' -l ID --no-header) -d $(onedatastore list -f TYPE=img -l ID --no-header | head -n 1) '{{_test_vm_ha_name}}'
-    register: vm_download
-    failed_when: "vm_download.rc != 0 and (vm_download.rc != 255 or 'NAME is already taken by IMAGE' not in vm_download.stderr)"
+- name: Download test VM template and image from the Marketplace
+  ansible.builtin.shell: |
+    onemarketapp export $(onemarketapp list -f NAME='{{ _test_vm_ha_name }}' -l ID --no-header) -d $(onedatastore list -f TYPE=img -l ID --no-header | head -n 1) '{{_test_vm_ha_name}}'
+  register: vm_download
+  failed_when: "vm_download.rc != 0 and (vm_download.rc != 255 or 'NAME is already taken by IMAGE' not in vm_download.stderr)"
 
-  - name: Verify VM Download from Marketplace
-    set_fact:
-      verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' : 'ok' }) }}"
+- name: Verify VM Download from Marketplace
+  set_fact:
+    verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' : 'ok' }) }}"
 
-  - name: "Check if VM already exists"
-    ansible.builtin.command: onevm list -l ID --csv --filter NAME=test_vm_ha --no-header
-    register: existing_vm
-    changed_when: false
+- name: "Check if VM already exists"
+  ansible.builtin.command: onevm list -l ID --csv --filter NAME=test_vm_ha --no-header
+  register: existing_vm
+  changed_when: false
 
-  - name: Instantiate test VM
-    ansible.builtin.shell: >
-      onetemplate instantiate "{{ _test_vm_ha_name }}" --name "test_vm_ha"
-    register: test_vm_ha
-    failed_when: "test_vm_ha.rc != 0" 
-    when: existing_vm.stdout == ""
+- name: Instantiate test VM
+  ansible.builtin.shell: >
+    onetemplate instantiate "{{ _test_vm_ha_name }}" --name "test_vm_ha"
+  register: test_vm_ha
+  failed_when: "test_vm_ha.rc != 0" 
+  when: existing_vm.stdout == ""
 
-  - name: Save VM id for cleanup
-    set_fact:
-      test_vm_ha_id: "{{ test_vm_ha.stdout.split(':')[1] | trim }}"
-    when: existing_vm.stdout == ""
+- name: Save VM id for cleanup
+  set_fact:
+    test_vm_ha_id: "{{ test_vm_ha.stdout.split(':')[1] | trim }}"
+  when: existing_vm.stdout == ""
 
-  - name: Wait for VM to be in running state
-    ansible.builtin.shell: >
-      onevm list --f ID={{ test_vm_ha_id }} -l STAT --no-header
-    register: vm_state
-    failed_when: "vm_state.rc != 0"
-    until: vm_state.stdout == "runn"
-    retries: 10
-    delay: 10
-    when: existing_vm.stdout == ""
+- name: Wait for VM to be in running state
+  ansible.builtin.shell: >
+    onevm list --f ID={{ test_vm_ha_id }} -l STAT --no-header
+  register: vm_state
+  failed_when: "vm_state.rc != 0"
+  until: vm_state.stdout == "runn"
+  retries: 10
+  delay: 10
+  when: existing_vm.stdout == ""
 
-  - name: Fetch VM information in JSON format
-    ansible.builtin.shell: >
-      onevm list --f ID={{ test_vm_ha_id }} -j
-    register: vm_info_json
-    failed_when: "vm_info_json.rc != 0"
+- name: Fetch VM information in JSON format
+  ansible.builtin.shell: >
+    onevm list --f ID={{ test_vm_ha_id }} -j
+  register: vm_info_json
+  failed_when: "vm_info_json.rc != 0"
 
-  - name: Extract HOSTNAME and HID from VM history
-    set_fact:
-      host_name: >-
-        {{ (vm_info_json.stdout | from_json).VM_POOL.VM[0].HISTORY_RECORDS.HISTORY.HOSTNAME }}
-      host_id: >-
-        {{ (vm_info_json.stdout | from_json).VM_POOL.VM[0].HISTORY_RECORDS.HISTORY.HID }}
+- name: Extract HOSTNAME and HID from VM history
+  set_fact:
+    host_name: >-
+      {{ (vm_info_json.stdout | from_json).VM_POOL.VM[0].HISTORY_RECORDS.HISTORY.HOSTNAME }}
+    host_id: >-
+      {{ (vm_info_json.stdout | from_json).VM_POOL.VM[0].HISTORY_RECORDS.HISTORY.HID }}
 
-  - name: Set the selected host to produce an error for VM HA Test
-    set_fact:
-      host_name_to_produce_error: "{{ host_name }}"
+- name: Set the selected host to produce an error for VM HA Test
+  set_fact:
+    host_name_to_produce_error: "{{ host_name }}"

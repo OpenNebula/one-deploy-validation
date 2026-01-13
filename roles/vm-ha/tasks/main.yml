@@ -1,0 +1,31 @@
+---
+- when: (hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host)
+  block:
+    - name: Setup VM for HA test
+      ansible.builtin.include_tasks: setup_vm.yml
+
+    - name: Find the node to produce error on
+      ansible.builtin.set_fact:
+        target_node_for_error: "{{ item }}"
+      loop: "{{ groups[node_group | d('node')] }}"
+      when:
+        - hostvars[item]['hostname_cmd'] == hostvars[inventory_hostname]['host_name_to_hostname_cmd'][host_name_to_produce_error]
+
+    - name: Fail if target node not found
+      ansible.builtin.fail:
+        msg: "Could not find ansible host corresponding to OpenNebula host {{ host_name_to_produce_error }}"
+      when: target_node_for_error is not defined
+
+    - name: Execute Fault Injection
+      ansible.builtin.include_tasks: fault_injection.yml
+      vars:
+        _produce_error_method: "{{ validation.vm_ha.produce_error_method | d('if_down') }}"
+      args:
+        apply:
+          delegate_to: "{{ target_node_for_error }}"
+
+    - name: Verify VM HA
+      ansible.builtin.include_tasks: verify.yml
+      vars:
+        _fencing_check_retries: "{{ validation.vm_ha.fencing_check_retries | default(8) }}"
+        _fencing_check_delay: "{{ validation.vm_ha.fencing_check_delay | default(60) }}"

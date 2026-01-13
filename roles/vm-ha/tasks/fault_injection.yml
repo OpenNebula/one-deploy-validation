@@ -20,4 +20,3 @@
 
 - name: Execute the selected produce error method
   ansible.builtin.include_tasks: vm_ha_produce_error_{{ _produce_error_method }}.yml
-  when: hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_hostname_cmd'][hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_produce_error']] == hostname_cmd

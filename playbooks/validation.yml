@@ -23,7 +23,37 @@
   roles:
     - role: network-benchmark
 
-- ansible.builtin.import_playbook: ./vm-ha.yml
+# VM HA Setup
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tasks:
+    - name: VM HA Setup
+      include_role:
+        name: vm-ha
+        tasks_from: setup_vm
+      when: validation.run_vm_ha | d(false)
+
+# VM HA Fault Injection
+- hosts: "{{ node_group | d('node') }}"
+  vars:
+    _produce_error_method: "{{ validation.vm_ha.produce_error_method | d('if_down') }}"
+  tasks:
+    - name: VM HA Fault Injection
+      include_role:
+        name: vm-ha
+        tasks_from: fault_injection
+      when: validation.run_vm_ha | d(false)
+
+# VM HA Verification
+- hosts: "{{ frontend_group | d('frontend') }}"
+  vars:
+    _fencing_check_retries: "{{ validation.vm_ha.fencing_check_retries | default(8) }}"
+    _fencing_check_delay: "{{ validation.vm_ha.fencing_check_delay | default(60) }}"
+  tasks:
+    - name: VM HA Verification
+      include_role:
+        name: vm-ha
+        tasks_from: verify
+      when: validation.run_vm_ha | d(false)
 
 # Cleanup the test VMs
 - hosts: "{{ frontend_group | d('frontend') }}"
@@ -35,13 +65,10 @@
   roles:
     - role: validation
 
-
-# Run FE HA verfification only when variable run_fe_ha is set to true
+# Run FE HA verification only when variable run_fe_ha is set to true
 - hosts: "{{ frontend_group | d('frontend') }}"
-  tasks:
-    - name: Import fe-ha playbook
-      import_playbook:
-        name: fe-ha
+  roles:
+    - role: fe_ha
       when: validation.run_fe_ha == true
 
 # Render verification report

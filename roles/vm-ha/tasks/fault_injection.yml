@@ -1,0 +1,23 @@
+---
+# NOTE: only execute these commands on the host that has been selected to produce the error
+- name: Manual confirmation before producing error for VM HA test
+  ansible.builtin.pause:
+    prompt: |
+      You are about to intentionally produce an error on this host for VM HA testing.
+      Host: {{ hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_produce_error'] }}
+      This will disrupt network/service and affect all running VMs.
+
+      Implications:
+        - The selected error method ({{ _produce_error_method }}) will be executed.
+        - The playbook to be executed: tasks/vm_ha_produce_error_{{ _produce_error_method }}.yml
+        - Configuration of the selected error method are shown below:
+            validation.vm_ha: {{ validation.vm_ha | d({}) | to_nice_json }} 
+        - The host may become unreachable and/or shut down.
+        - VM HA recovery will be triggered and tested.
+        - The affected host is not recovered automatically.
+      
+      Press Enter to continue, or Ctrl+C to abort.
+
+- name: Execute the selected produce error method
+  ansible.builtin.include_tasks: vm_ha_produce_error_{{ _produce_error_method }}.yml
+  when: hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_hostname_cmd'][hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_produce_error']] == hostname_cmd

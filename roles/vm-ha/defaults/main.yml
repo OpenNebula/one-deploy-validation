@@ -1,0 +1,1 @@
+_test_vm_ha_name: "{{ validation.vm_ha.vm_market_name | d('Alpine Linux 3.21') }}"

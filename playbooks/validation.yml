@@ -10,6 +10,8 @@
     - role: storage-benchmark
       when: validation.run_storage_benchmark | d(true)
     - role: validation_frontend
+    - role: network_validation
+      when: validation.networks_verification | d(true)
 
 # Run connectivity tests between virtual machines
 - hosts: "{{ node_group | d('node') }},{{ frontend_group | d('frontend') }}"

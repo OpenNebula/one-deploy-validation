@@ -1,0 +1,6 @@
+---
+- name: Run networks validation test
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/tasks/networks_verification.yml"
+  when: validation.networks_verification
+

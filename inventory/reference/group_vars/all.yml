@@ -38,7 +38,13 @@ validation:
         desc: OpenNebula Fireedge GUI
       # Add other services if more should be checked.
     check_fireedge_ui: true
-
+  # TEST CASE NAME: OneFlow Smoke Test (service/state/vms)
+  # DESCRIPTION: Creates and instantiates a temporary OneFlow service, checks its state and
+  # VM count, and reports the result. If the service does not reach RUNNING, the state is
+  # recorded as a comment in the HTML report.
+  # OUTPUT: OneFlow smoke test result and optional failure comment in /tmp/cloud_verification_report.html
+  run_one_flow: true
+ 
   # TEST CASE NAME: Storage Benchmark
   # DESCRIPTION: Instantiates a VM for running storage benchmark from it. The VM needs to
   # have public internet access to install dependencies. The VM's connected network can

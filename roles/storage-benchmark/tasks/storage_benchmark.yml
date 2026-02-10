@@ -49,7 +49,6 @@
     become: true
     become_user: oneadmin
     ansible.builtin.shell: |
-      ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} 'sh -c "printf \"nameserver 8.8.8.8\n\" > /etc/resolv.conf"'
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk update > /dev/null
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk add fio > /dev/null
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} 'cat > /tmp/onebench.fio << "EOF"

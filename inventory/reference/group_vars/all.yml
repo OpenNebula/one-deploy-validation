@@ -46,7 +46,7 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_storage_benchmark: true
   storage_benchmark:
-    vnet_name: evpn0
+    vnet_name: public
 
   # TEST CASE NAME: Network Benchmark
   # DESCRIPTION: Runs an iperf bandwidth and ping benchmark between all hypervisor hosts
@@ -67,9 +67,9 @@ validation:
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
   run_conn_matrix: true
   conn_matrix:
-    bridge_name: onebr0
+    bridge_name: br0
     ping_count: 10
-    vnet_name: evpn0
+    vnet_name: public
     market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: VM instantiation
@@ -91,7 +91,7 @@ validation:
         ]
     create_vnet: false
     vnet:
-      name: 'evpn0'
+      name: 'public'
       desc: 'A test network for post-deployment cloud verification'
       bridge: 'br-test'
       vn_mad: 'dummy'

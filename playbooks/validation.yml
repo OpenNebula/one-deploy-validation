@@ -73,9 +73,9 @@
         label: "{{ item }}"
 
     - name: Collect storage benchmark results from frontend hosts
-      # Build a map of frontend -> { read, write } so the report can render them
+      # Merge storage_benchmark maps built by the role
       ansible.builtin.set_fact:
-        storage_benchmark: "{{ storage_benchmark | default({}) | combine({ item: {'write': hostvars[item].write | default(None), 'read': hostvars[item].read | default(None)} }) }}"
+        storage_benchmark: "{{ storage_benchmark | default({}) | combine(hostvars[item].storage_benchmark | default({}), recursive=True) }}"
       loop: "{{ groups[frontend_group | d('frontend')] }}"
       loop_control:
         label: "{{ item }}"

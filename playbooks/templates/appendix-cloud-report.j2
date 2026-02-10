@@ -64,6 +64,11 @@
 		    word-break: break-word;
 		}
 
+		.network_table td.aws_profile_cell {
+		    font-weight: 600;
+		    background-color: #f3f7ff !important;
+		}
+
 		@page { size: 8.5in 11in; margin-left: 1in; margin-right: 1in; margin-bottom: 0.5in }
 		p { line-height: 115%; text-align: left; orphans: 0; widows: 0; margin-bottom: 0.1in; direction: ltr; background: transparent }
 		h1 { line-height: 100%; text-align: justify; page-break-inside: auto; orphans: 0; widows: 0; margin-top: 0.33in; margin-bottom: 0.12in; direction: ltr; background: transparent; page-break-before: auto; page-break-after: auto }
@@ -141,94 +146,125 @@
 
   <h2 class="western">Storage benchmarking results</h2>
 
-	<!-- Compact storage benchmark: metrics as rows, hosts as columns -->
 	{% set hosts = storage_benchmark.keys() | list %}
 
-	<div style="display: block;">
-	  <div style="width: 100%; margin-bottom: 1rem;">
-	    <h3 class="western">Read metrics</h3>
-	    <table class="network_table">
-	      <tr>
-	        <th>Metric</th>
-	        {% for h in hosts %}
-	          <th>{{ h }}</th>
-	        {% endfor %}
-	      </tr>
-	      <tr><td>Blocksize (KB)</td>{% for h in hosts %}{% set r = storage_benchmark[h].read if (storage_benchmark[h].read is defined and storage_benchmark[h].read is not none) else {} %}
-	        <td>
-	          {% set bs_raw = r.bs | default(None) %}
-	          {% if bs_raw %}
-	            {% if bs_raw is string %}
-	              {% set suffix = bs_raw[-1] %}
-	              {% set num = (bs_raw[:-1]) | float(default=0) %}
-	              {% if suffix in ['k','K'] %}
-	                {% set kb = num %}
-	              {% elif suffix in ['m','M'] %}
-	                {% set kb = num * 1024 %}
-	              {% elif suffix in ['g','G'] %}
-	                {% set kb = num * 1024 * 1024 %}
-	              {% else %}
-	                {% set kb = (bs_raw | float) / 1024 %}
-	              {% endif %}
-	            {% else %}
-	              {% set kb = (bs_raw | float) / 1024 %}
-	            {% endif %}
-	            {% set kb_str = ('%.2f'|format(kb)).rstrip('0').rstrip('.') %}
-	            {{ kb_str }} KB
-	          {% else %}
-	            N/A
-	          {% endif %}
-	        </td>{% endfor %}</tr>
-	      <tr><td>Bandwidth (MB/s)</td>{% for h in hosts %}{% set r = storage_benchmark[h].read if (storage_benchmark[h].read is defined and storage_benchmark[h].read is not none) else {} %}<td class="num">{{ r.bw_mbs | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>Completion latency (ms)</td>{% for h in hosts %}{% set r = storage_benchmark[h].read if (storage_benchmark[h].read is defined and storage_benchmark[h].read is not none) else {} %}<td class="num">{{ r.clat_ms | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>IO depth</td>{% for h in hosts %}{% set r = storage_benchmark[h].read if (storage_benchmark[h].read is defined and storage_benchmark[h].read is not none) else {} %}<td class="num">{{ r.iodepth | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>IOPS</td>{% for h in hosts %}{% set r = storage_benchmark[h].read if (storage_benchmark[h].read is defined and storage_benchmark[h].read is not none) else {} %}<td class="num">{{ r.iops | default('N/A') }}</td>{% endfor %}</tr>
-	    </table>
-	  </div>
+	{% set ordered_profiles = [
+	  {'key': 'rr_4k_qd1', 'label': 'rr_4k_qd1'},
+	  {'key': 'rr_4k_qd4', 'label': 'rr_4k_qd4'},
+	  {'key': 'rr_4k_qd16', 'label': 'rr_4k_qd16'},
+	  {'key': 'rr_4k_qd32', 'label': 'rr_4k_qd32'},
+	  {'key': 'rr_4k_qd64', 'label': 'rr_4k_qd64'},
+	  {'key': 'rw_4k_qd1', 'label': 'rw_4k_qd1'},
+	  {'key': 'rw_4k_qd4', 'label': 'rw_4k_qd4'},
+	  {'key': 'rw_4k_qd16', 'label': 'rw_4k_qd16'},
+	  {'key': 'rw_4k_qd32', 'label': 'rw_4k_qd32'},
+	  {'key': 'rw_4k_qd64', 'label': 'rw_4k_qd64'},
+	  {'key': 'mix_4k_70r_qd16', 'label': 'mix_4k_70r_qd16'},
+	  {'key': 'mix_64k_70r_qd16', 'label': 'mix_64k_70r_qd16'},
+	  {'key': 'seqr_128k_qd16', 'label': 'seqr_128k_qd16'},
+	  {'key': 'seqw_128k_qd16', 'label': 'seqw_128k_qd16'},
+	  {'key': 'seqr_1m_qd4', 'label': 'seqr_1m_qd4'},
+	  {'key': 'seqw_1m_qd4', 'label': 'seqw_1m_qd4'},
+	  {'key': 'syncwrite_4k_qd1', 'label': 'syncwrite_4k_qd1'}
+	] %}
 
-	  <div style="width: 100%;">
-	    <h3 class="western">Write metrics</h3>
-	    <table class="network_table">
-	      <tr>
-	        <th>Metric</th>
-	        {% for h in hosts %}
-	          <th>{{ h }}</th>
-	        {% endfor %}
-	      </tr>
-	      <tr><td>Blocksize (KB)</td>{% for h in hosts %}{% set w = storage_benchmark[h].write if (storage_benchmark[h].write is defined and storage_benchmark[h].write is not none) else {} %}
-	        <td>
-	          {% set bs_raw = w.bs | default(None) %}
-	          {% if bs_raw %}
-	            {% if bs_raw is string %}
-	              {% set suffix = bs_raw[-1] %}
-	              {% set num = (bs_raw[:-1]) | float(default=0) %}
-	              {% if suffix in ['k','K'] %}
-	                {% set kb = num %}
-	              {% elif suffix in ['m','M'] %}
-	                {% set kb = num * 1024 %}
-	              {% elif suffix in ['g','G'] %}
-	                {% set kb = num * 1024 * 1024 %}
-	              {% else %}
-	                {% set kb = (bs_raw | float) / 1024 %}
-	              {% endif %}
-	            {% else %}
-	              {% set kb = (bs_raw | float) / 1024 %}
-	            {% endif %}
-	            {% set kb_str = ('%.2f'|format(kb)).rstrip('0').rstrip('.') %}
-	            {{ kb_str }} KB
-	          {% else %}
-	            N/A
-	          {% endif %}
-	        </td>{% endfor %}</tr>
-	      <tr><td>Bandwidth (MB/s)</td>{% for h in hosts %}{% set w = storage_benchmark[h].write if (storage_benchmark[h].write is defined and storage_benchmark[h].write is not none) else {} %}<td class="num">{{ w.bw_mbs | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>Completion latency (ms)</td>{% for h in hosts %}{% set w = storage_benchmark[h].write if (storage_benchmark[h].write is defined and storage_benchmark[h].write is not none) else {} %}<td class="num">{{ w.clat_ms | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>IO depth</td>{% for h in hosts %}{% set w = storage_benchmark[h].write if (storage_benchmark[h].write is defined and storage_benchmark[h].write is not none) else {} %}<td class="num">{{ w.iodepth | default('N/A') }}</td>{% endfor %}</tr>
-	      <tr><td>IOPS</td>{% for h in hosts %}{% set w = storage_benchmark[h].write if (storage_benchmark[h].write is defined and storage_benchmark[h].write is not none) else {} %}<td class="num">{{ w.iops | default('N/A') }}</td>{% endfor %}</tr>
-	    </table>
-	  </div>
-	</div>
+	{% set aws_profile_keys = ['rr_4k_qd32', 'rw_4k_qd32', 'seqr_128k_qd16', 'seqw_128k_qd16'] %}
 
-	</div>
+	{% for h in hosts %}
+	  <h3 class="western">{{ h }}</h3>
+	  <table class="network_table">
+	    <tr>
+	      <th>Job</th>
+	      <th class="num">IOPS</th>
+	      <th class="num">BW (MB/s)</th>
+	      <th class="num">p99 Lat (ms)</th>
+	      <th class="num">Score</th>
+	    </tr>
+	    {% for item in ordered_profiles %}
+	      {% set p = (storage_benchmark[h].profiles | selectattr('name', 'equalto', item.key) | list | first | default({})) %}
+	      {% set rw = p.rw | default('') %}
+	      {% if rw in ['read', 'randread'] %}
+	        {% set iops = p.read_iops | default(None) %}
+	        {% set bw_kib = p.read_bw_kib | default(None) %}
+	        {% set lat_ns = p.read_p99_ns | default(None) %}
+	      {% elif rw in ['write', 'randwrite'] %}
+	        {% set iops = p.write_iops | default(None) %}
+	        {% set bw_kib = p.write_bw_kib | default(None) %}
+	        {% set lat_ns = p.write_p99_ns | default(None) %}
+	      {% elif rw in ['rw', 'randrw'] %}
+	        {% set r_iops = p.read_iops | default(None) %}
+	        {% set w_iops = p.write_iops | default(None) %}
+	        {% if r_iops is not none or w_iops is not none %}
+	          {% set iops = (r_iops | default(0)) + (w_iops | default(0)) %}
+	        {% else %}
+	          {% set iops = None %}
+	        {% endif %}
+	        {% set r_bw = p.read_bw_kib | default(None) %}
+	        {% set w_bw = p.write_bw_kib | default(None) %}
+	        {% if r_bw is not none or w_bw is not none %}
+	          {% set bw_kib = (r_bw | default(0)) + (w_bw | default(0)) %}
+	        {% else %}
+	          {% set bw_kib = None %}
+	        {% endif %}
+	        {% set r_lat = p.read_p99_ns | default(None) %}
+	        {% set w_lat = p.write_p99_ns | default(None) %}
+	        {% if r_lat is not none and w_lat is not none %}
+	          {% set lat_ns = [r_lat, w_lat] | max %}
+	        {% elif r_lat is not none %}
+	          {% set lat_ns = r_lat %}
+	        {% else %}
+	          {% set lat_ns = w_lat %}
+	        {% endif %}
+	      {% else %}
+	        {% set iops = None %}
+	        {% set bw_kib = None %}
+	        {% set lat_ns = None %}
+	      {% endif %}
+	      {% if item.key[:3] == 'seq' %}
+	        {% if bw_kib is not none %}
+	          {% set bw_mbs = (bw_kib / 1024) %}
+	        {% else %}
+	          {% set bw_mbs = None %}
+	        {% endif %}
+	        {% if bw_mbs is not none and bw_mbs >= 300 %}
+	          {% set score = '⭐⭐⭐' %}
+	        {% elif bw_mbs is not none and bw_mbs >= 150 %}
+	          {% set score = '⭐⭐' %}
+	        {% elif bw_mbs is not none and bw_mbs >= 75 %}
+	          {% set score = '⭐' %}
+	        {% else %}
+	          {% set score = '⚠️' %}
+	        {% endif %}
+	      {% else %}
+	        {% if lat_ns is not none %}
+	          {% set lat_ms = (lat_ns / 1000000) %}
+	        {% else %}
+	          {% set lat_ms = None %}
+	        {% endif %}
+	        {% if lat_ms is not none and lat_ms <= 5 %}
+	          {% set score = '⭐⭐⭐' %}
+	        {% elif lat_ms is not none and lat_ms <= 10 %}
+	          {% set score = '⭐⭐' %}
+	        {% elif lat_ms is not none and lat_ms <= 20 %}
+	          {% set score = '⭐' %}
+	        {% else %}
+	          {% set score = '⚠️' %}
+	        {% endif %}
+	      {% endif %}
+
+	      <tr>
+	        <td>{{ item.label }}</td>
+	        <td class="num {% if item.key in ['rr_4k_qd32', 'rw_4k_qd32'] %}aws_profile_cell{% endif %}">{{ iops | default('N/A') }}</td>
+	        <td class="num {% if item.key in ['seqr_128k_qd16', 'seqw_128k_qd16'] %}aws_profile_cell{% endif %}">{% if bw_kib is not none %}{{ (bw_kib / 1024) | round(2) }}{% else %}N/A{% endif %}</td>
+	        <td class="num {% if item.key in ['rr_4k_qd1', 'rw_4k_qd1'] %}aws_profile_cell{% endif %}">{% if lat_ns is not none %}{{ (lat_ns / 1000000) | round(2) }}{% else %}N/A{% endif %}</td>
+	        <td class="num">{{ score }}</td>
+	      </tr>
+	    {% endfor %}
+	  </table>
+	  <p><b>Note:</b> Highlighted values mark AWS-aligned reference profiles (4k QD32 IOPS and 128k QD16 throughput).</p>
+	  <p><b>Note:</b> The score uses p99 latency for random/mix/syncwrite and throughput for sequential profiles.</p>
+	{% endfor %}
+
 </div>
 {% endif %}
 

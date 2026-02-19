@@ -75,7 +75,7 @@ validation:
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
   run_conn_matrix: true
   conn_matrix:
-    bridge_name: onebr0
+    bridge_name: br0
     ping_count: 10
     vnet_name: public
     market_name: 'Alpine Linux 3.21'
@@ -100,6 +100,7 @@ validation:
     create_vnet: false
     vnet_name: 'public'
     vnet:
+      name: 'public'
       desc: 'A test network for post-deployment cloud verification'
       bridge: 'br0'
       vn_mad: 'dummy'

@@ -41,7 +41,7 @@
     ssh -i ~/.ssh/conn-matrix -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{{ _my_vm_ip }} -- \
       ping -c {{ _conn_matrix_ping_count }} {{ other_vm.value }} | jc --ping > /tmp/conn-matrix-results/{{ inventory_hostname }}/{{ _other_hostname }}.json
   register: conn_test_result
-  retries: 3
+  retries: 10
   delay: 5
   until: "'Connection refused' not in conn_test_result.stderr and 'No route to host' not in conn_test_result.stderr"
 

@@ -1,13 +1,5 @@
 ---
-# Storage banchmarking commands on the reference VM
-# apk update
-# apk add fio
-# fio --name=fiotest --blocksize=4k --directory=/tmp --size=5g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randwrite --direct=1 --group_reporting  --output-format=json | jq '.jobs[0].write'
-#  fio --name=fiotest --blocksize=4k --directory=/tmp --size=5g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randread --direct=1 --group_reporting  --output-format=json | jq '.jobs[0].read'
-
-###
-# Storage benchmarking. Execute the block below only when {{ validation.storage_benchmark }} variable set
-###
+# Storage benchmarking. Execute the block below only when validation.storage_benchmark is enabled.
 - name: Run Storage benchmark test
   block:
   - name: Get VM template as JSON
@@ -24,17 +16,15 @@
 
   - name: Instantiate benchmark VM
     ansible.builtin.shell: >
-      onetemplate instantiate "{{ validation.test_vm.vm.market_name }}" --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=3000 --mem 1g
-    #onetemplate instantiate {{ validation.test_vm.vm.market_name }} --nic '{{validation.storage_benchmark.vnet_name}}' --disk {{ test_vm_template_image_id }}:size=10000 --mem 2g
+      onetemplate instantiate "{{ validation.test_vm.vm.market_name }}" --nic '{{ validation.storage_benchmark.vnet_name }}' --disk {{ test_vm_template_image_id }}:size=8000 --mem 1g
     register: benchmarkvm_id
     failed_when: "benchmarkvm_id.rc != 0"
-    # retry for robustness, e.g. in case we can only have 1 test VM running at a time for some reason, previous one is still shutting down.
     retries: 3
     delay: 20
 
   - name: Wait for benchmark VM to come up
     ansible.builtin.shell: >
-      onevm list --f ID={{benchmarkvm_id.stdout.split(':')[1] | trim}} -l STAT --no-header
+      onevm list --f ID={{ benchmarkvm_id.stdout.split(':')[1] | trim }} -l STAT --no-header
     register: benchmarkvm_state
     failed_when: "benchmarkvm_state.rc != 0"
     until: benchmarkvm_state.stdout == "runn"
@@ -43,65 +33,183 @@
 
   - name: Get Benchmark VM IP
     ansible.builtin.shell: >
-      onevm list --f ID={{benchmarkvm_id.stdout.split(':')[1] | trim}} -l IP --no-header
+      onevm list --f ID={{ benchmarkvm_id.stdout.split(':')[1] | trim }} -l IP --no-header
     register: vm_ip
     failed_when: "vm_ip.rc != 0"
 
   - name: Verify ssh connection to the benchmark VM
     ansible.builtin.shell: >
-      ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}}
+      ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }}
     register: ssh_conn_result
     until: ssh_conn_result.rc == 0
     retries: 10
     delay: 10
 
-  - name: Run Storage benchmark for write
+  - name: Run Storage benchmark suite
     become: true
     become_user: oneadmin
     ansible.builtin.shell: |
-      #ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} apk update > /dev/null
-      #ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} apk add fio > /dev/null
-      #ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} "fio --name=fiotest --blocksize=4k --directory=/tmp --size=5g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randwrite --direct=1 --group_reporting  --output-format=json | jq  -rc '.jobs[0] | {\"iodepth\": .\"job options\".iodepth, bs: .\"job options\".bs, \"clat_ms\": (.write.clat_ns.mean/1000)|floor, \"bw_mbs\": (.write.bw_mean/1024)|floor, iops: .write.iops_mean|floor}'"
-      ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} apk update > /dev/null
-      ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} apk add fio > /dev/null
-      ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} "fio --name=fiotest --blocksize=4k --directory=/tmp --size=1g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randwrite --direct=1 --group_reporting  --output-format=json | jq  -rc '.jobs[0] | {\"iodepth\": .\"job options\".iodepth, bs: .\"job options\".bs, \"clat_ms\": (.write.clat_ns.mean/1000)|floor, \"bw_mbs\": (.write.bw_mean/1024)|floor, iops: .write.iops_mean|floor}'"
-    register: write_benchmark
-    failed_when: "write_benchmark.rc != 0"
+      ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk update > /dev/null
+      ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk add fio > /dev/null
+      ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} 'cat > /tmp/onebench.fio << "EOF"
+      [global]
+      time_based=1
+      group_reporting=1
+      direct=1
+      ioengine=libaio
+      filename=/tmp/onebench.testfile
+      size=4G
+      randrepeat=0
+      norandommap=1
+      invalidate=1
+      thread=1
+      lat_percentiles=1
+      percentile_list=99
+      ramp_time=5
+      runtime=5
 
-  - name: debug write benchmark
-    debug:
-      msg: "Write benchmark results: {{ write_benchmark }}"
+      [rr_4k_qd1]
+      rw=randread
+      bs=4k
+      iodepth=1
+      numjobs=1
+      stonewall
 
-  - name: Save write benchmark Results
-    set_fact:
-      write:
-        bs: "{{ write_benchmark.stdout | from_json | json_query('bs') }}"
-        bw_mbs: "{{ write_benchmark.stdout | from_json | json_query('bw_mbs') }}"
-        clat_ms: "{{ write_benchmark.stdout | from_json | json_query('clat_ms') }}"
-        iodepth: "{{ write_benchmark.stdout | from_json | json_query('iodepth') }}"
-        iops: "{{ write_benchmark.stdout | from_json | json_query('iops') }}"
+      [rr_4k_qd4]
+      rw=randread
+      bs=4k
+      iodepth=4
+      numjobs=1
+      stonewall
 
+      [rr_4k_qd16]
+      rw=randread
+      bs=4k
+      iodepth=16
+      numjobs=1
+      stonewall
 
-  - name: Run Storage benchmark for read
-    become: true
-    become_user: oneadmin
-    ansible.builtin.shell: >
-      ssh -q -oStrictHostKeyChecking=no root@{{vm_ip.stdout}} "fio --name=fiotest --blocksize=4k --directory=/tmp --size=1g --ioengine=libaio --iodepth=256 --runtime=60 --rw=randread --direct=1 --group_reporting  --output-format=json | jq -rc '.jobs[0] | {\"iodepth\": .\"job options\".iodepth, bs: .\"job options\".bs, \"clat_ms\": (.read.clat_ns.mean/1000)|floor, \"bw_mbs\": (.read.bw_mean/1024)|floor, iops: .read.iops_mean|floor}'"
-    register: read_benchmark
-    failed_when: "read_benchmark.rc != 0"
+      [rr_4k_qd64]
+      rw=randread
+      bs=4k
+      iodepth=64
+      numjobs=1
+      stonewall
 
-  - name: Save read benchmark Results
-    set_fact:
-      read:
-        bs: "{{ read_benchmark.stdout | from_json | json_query('bs') }}"
-        bw_mbs: "{{ read_benchmark.stdout | from_json | json_query('bw_mbs') }}"
-        clat_ms: "{{ read_benchmark.stdout | from_json | json_query('clat_ms') }}"
-        iodepth: "{{ read_benchmark.stdout | from_json | json_query('iodepth') }}"
-        iops: "{{ read_benchmark.stdout | from_json | json_query('iops') }}"
+      [rr_4k_qd32]
+      rw=randread
+      bs=4k
+      iodepth=32
+      numjobs=1
+      stonewall
+
+      [rw_4k_qd1]
+      rw=randwrite
+      bs=4k
+      iodepth=1
+      numjobs=1
+      stonewall
+
+      [rw_4k_qd4]
+      rw=randwrite
+      bs=4k
+      iodepth=4
+      numjobs=1
+      stonewall
+
+      [rw_4k_qd16]
+      rw=randwrite
+      bs=4k
+      iodepth=16
+      numjobs=1
+      stonewall
+
+      [rw_4k_qd64]
+      rw=randwrite
+      bs=4k
+      iodepth=64
+      numjobs=1
+      stonewall
+
+      [rw_4k_qd32]
+      rw=randwrite
+      bs=4k
+      iodepth=32
+      numjobs=1
+      stonewall
+
+      [mix_4k_70r_qd16]
+      rw=randrw
+      bs=4k
+      iodepth=16
+      rwmixread=70
+      numjobs=1
+      stonewall
+
+      [mix_64k_70r_qd16]
+      rw=randrw
+      bs=64k
+      iodepth=16
+      rwmixread=70
+      numjobs=1
+      stonewall
+
+      [seqr_1m_qd4]
+      rw=read
+      bs=1m
+      iodepth=4
+      numjobs=1
+      stonewall
+
+      [seqr_128k_qd16]
+      rw=read
+      bs=128k
+      iodepth=16
+      numjobs=1
+      stonewall
+
+      [seqw_1m_qd4]
+      rw=write
+      bs=1m
+      iodepth=4
+      numjobs=1
+      stonewall
+
+      [seqw_128k_qd16]
+      rw=write
+      bs=128k
+      iodepth=16
+      numjobs=1
+      stonewall
+
+      [syncwrite_4k_qd1]
+      rw=write
+      bs=4k
+      iodepth=1
+      fsync_on_close=1
+      end_fsync=1
+      numjobs=1
+      stonewall
+      EOF'
+      ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} "fio /tmp/onebench.fio --output-format=json"
+    register: fio_suite
+    failed_when: "fio_suite.rc != 0"
+
+  - name: Parse storage benchmark results
+    ansible.builtin.set_fact:
+      storage_benchmark: >-
+        {{
+          storage_benchmark | default({}) | combine({
+            inventory_hostname: {
+              'fio_raw': (fio_suite.stdout | from_json),
+              'profiles': (fio_suite.stdout | from_json | json_query('jobs[].{name: jobname, rw: "job options".rw, bs: "job options".bs, iodepth: "job options".iodepth, read_iops: read.iops, read_bw_kib: read.bw, read_p99_ns: read.clat_ns.percentile."99.000000", write_iops: write.iops, write_bw_kib: write.bw, write_p99_ns: write.clat_ns.percentile."99.000000" }') )
+            }
+          }, recursive=True)
+        }}
 
   - name: Delete benchmark VM
     ansible.builtin.shell: |
-      onevm terminate --hard {{benchmarkvm_id.stdout.split(':')[1]}}
+      onevm terminate --hard {{ benchmarkvm_id.stdout.split(':')[1] }}
     register: cleanup_result
     failed_when: "cleanup_result.rc != 0"
 

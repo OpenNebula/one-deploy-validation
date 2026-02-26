@@ -9,7 +9,13 @@
       when: validation.run_test_vm | d(true)
     - role: storage-benchmark
       when: validation.run_storage_benchmark | d(true)
+    - role: ldap_auth
+      when: validation.run_ldap_auth | d(false)
+      tags:
+        - ldap_auth
     - role: validation_frontend
+    - role: network_validation
+      when: validation.networks_verification | d(true)
 
 # Run connectivity tests between virtual machines
 - hosts: "{{ node_group | d('node') }},{{ frontend_group | d('frontend') }}"
@@ -59,7 +65,13 @@
 - hosts: "{{ frontend_group | d('frontend') }}"
   roles:
     - role: fe_ha
-      when: validation.run_fe_ha == true
+      when: validation.run_fe_ha | d(false)
+
+# Run Federation validation when variable run_federation is set to true
+- hosts: "{{ frontend_group | d('frontend') }}"
+  roles:
+    - role: federation
+      when: validation.run_federation | d(false)
 
 # Render verification report
 - hosts: localhost
@@ -68,6 +80,7 @@
   vars:
     verification_result: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_result | default({'No verification results were found': 'N/A'})}}"
     verification_comments: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_comments | default({}) }}"
+    network_verification_results: "{{ hostvars[groups[frontend_group | d('frontend')][0]].network_verification_results | default({'No Network verification results were found': {'N/A':'N/A'}})}}"
     date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
     validation_vars: "{{ hostvars[groups[frontend_group | d('frontend')][0]].validation | default({}) }}"
   tasks:
@@ -88,10 +101,21 @@
         label: "{{ item }}"
 
     - name: Collect storage benchmark results from frontend hosts
-      # Build a map of frontend -> { read, write } so the report can render them
+      # Merge storage_benchmark maps built by the role
       ansible.builtin.set_fact:
-        storage_benchmark: "{{ storage_benchmark | default({}) | combine({ item: {'write': hostvars[item].write | default(None), 'read': hostvars[item].read | default(None)} }) }}"
+        storage_benchmark: "{{ storage_benchmark | default({}) | combine(hostvars[item].storage_benchmark | default({}), recursive=True) }}"
       loop: "{{ groups[frontend_group | d('frontend')] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Collect federation results from all frontend hosts
+      # Build a map of frontend -> verification_result for federation checks
+      ansible.builtin.set_fact:
+        all_federation_results: "{{ all_federation_results | default({}) | combine({item: hostvars[item].verification_result | default({})}) }}"
+      loop: "{{ groups[frontend_group | d('frontend')] }}"
+      when: 
+        - hostvars[item].verification_result is defined
+        - validation.run_federation | d(false)
       loop_control:
         label: "{{ item }}"
 
@@ -109,8 +133,8 @@
         dest: /tmp/cloud_verification_report.html
       vars:
         repo_version: "{{ repo_version_cmd.stdout }}"
-        # pass collected network benchmark results to the template
-        network_benchmark: "{{ network_benchmark | default({}) }}"
+        date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
+        verification_result: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_result }}"
 
     - name: Print report location
       ansible.builtin.debug:

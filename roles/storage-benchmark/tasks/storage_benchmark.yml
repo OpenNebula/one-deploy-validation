@@ -42,15 +42,21 @@
       ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }}
     register: ssh_conn_result
     until: ssh_conn_result.rc == 0
-    retries: 10
+    retries: 20
     delay: 10
 
-  - name: Run Storage benchmark suite
+  - name: Install fio on benchmark VM
     become: true
     become_user: oneadmin
     ansible.builtin.shell: |
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk update > /dev/null
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} apk add fio > /dev/null
+    when: not (validation.storage_benchmark.skip_fio_install | d(false))
+
+  - name: Run Storage benchmark suite
+    become: true
+    become_user: oneadmin
+    ansible.builtin.shell: |
       ssh -q -oStrictHostKeyChecking=no root@{{ vm_ip.stdout }} 'cat > /tmp/onebench.fio << "EOF"
       [global]
       time_based=1

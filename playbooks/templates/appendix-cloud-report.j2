@@ -270,7 +270,11 @@
                 </td>
                 <td width="90" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
 			{% for test, value in v.items() %}
-                        <b>{{ test }}</b>: {{ value }}</p>
+		{% if value is mapping %}
+		<b>{{ test | trim }}</b>: {{ value.packets_received }}/{{ value.packets_transmitted }} packets received ({{ value.packet_loss_percent }}% loss), avg RTT {{ value.round_trip_ms_avg }}ms</p>
+		{% else %}
+                        <b>{{ test | trim }}</b>: {{ value | trim }}</p>
+		{% endif %}
                         {% endfor %}
                 </td>
                 <td width="260" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">

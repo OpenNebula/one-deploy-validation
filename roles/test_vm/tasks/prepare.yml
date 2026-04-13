@@ -1,34 +1,33 @@
 ---
+- name: Check if VM template already exists in OpenNebula
+  ansible.builtin.shell: >
+    onetemplate list --csv -f NAME='{{ _test_vm_name }}' -l ID --no-header
+  register: existing_vm_template_id
+  changed_when: false
+  failed_when: existing_vm_template_id.rc != 0
+
 - name: Download test VM template and image from the Marketplace
   ansible.builtin.shell: |
     onemarketapp export $(onemarketapp list -f NAME='{{ _test_vm_name }}' -l ID --no-header) -d $(onedatastore list -f TYPE=img -l ID --no-header | head -n 1) '{{_test_vm_name}}'
   register: vm_download
-  # success when: rc == 0 or rc == 255 and 'NAME is already taken by IMAGE' in stderr
-  failed_when: "vm_download.rc != 0 and (vm_download.rc != 255 or 'NAME is already taken by IMAGE' not in vm_download.stderr)"
+  failed_when: vm_download.rc != 0
+  when: existing_vm_template_id.stdout | trim == ''
 
 - name: Verify VM Download from Marketplace
   set_fact:
     verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' : 'ok' }) }}"
+  when: vm_download is not skipped and vm_download.rc == 0
 
-# We have to check that image was downlodaded before attempting to instantiate VM
 - name: Get newly downloaded VM template ID
   ansible.builtin.shell: >
     echo '{{ vm_download.stdout }}' | grep -A1 VMTEMPLATE | grep ID | awk '{print $2}'
   register: new_vm_template_id
-  failed_when: "new_vm_template_id.rc != 0"
-  when: vm_download.rc == 0
-
-- name: Get existing VM template ID
-  ansible.builtin.shell: >
-    onetemplate list --csv -f NAME='{{ _test_vm_name }}' -l ID --no-header
-  register: existing_vm_template_id
-  failed_when: "existing_vm_template_id.rc != 0"
-  when: vm_download.rc == 255 and 'NAME is already taken by IMAGE' in vm_download.stderr
+  failed_when: new_vm_template_id.rc != 0
+  when: vm_download is not skipped and vm_download.rc == 0
 
 - name: Set VM template ID
   set_fact:
-    vm_template_id: "{{ new_vm_template_id if not new_vm_template_id.skipped|default(false) else existing_vm_template_id }}"
-  failed_when: new_vm_template_id.skipped|default(false) and existing_vm_template_id.skipped|default(false)
+    vm_template_id: "{{ new_vm_template_id if (vm_download is not skipped and vm_download.rc == 0) else existing_vm_template_id }}"
 
 - name: Write extra template variables to a temporary file on the remote host
   ansible.builtin.copy:

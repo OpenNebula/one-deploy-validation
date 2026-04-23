@@ -70,21 +70,21 @@
 
 - name: Check GW reachability from VM
   ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} ping -c 3 $(ip route show default | awk '/default/ {print $3}') | jc --ping --pretty
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} ping -c 3 $(ip route show default | awk '/default/ {print $3}') | /usr/bin/jc --ping --pretty
   register: gw_reachability
   loop: "{{ vm_ip.results }}"
   run_once: true
 
 - name: Check DNS resolvation
   ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} dig {{ validation.network.ext_host  }}   | jc --dig -p | jq .[].answer.[].data
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} dig {{ validation.network.ext_host  }}   | /usr/bin/jc --dig -p | jq .[].answer.[].data
   register: dns_reachability
   loop: "{{ vm_ip.results }}"
   run_once: true
 
 - name: Check external host reachability from the test VM
   ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} ping -c 3 {{ validation.network.ext_host  }} | jc --ping --pretty
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} ping -c 3 {{ validation.network.ext_host  }} | /usr/bin/jc --ping --pretty
   register: ext_host_reachability
   loop: "{{ vm_ip.results }}"
   run_once: true

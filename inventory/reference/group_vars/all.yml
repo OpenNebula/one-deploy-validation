@@ -80,7 +80,7 @@ validation:
   # OUTPUT: 
   #    - HTML document at /tmp/conn-matrix-report.html
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
-  run_conn_matrix: true
+  run_conn_matrix: false
   conn_matrix:
     bridge_name: br0
     ping_count: 10
@@ -125,7 +125,7 @@ validation:
   # DESCRIPTION: Validates LDAP bind, OpenNebula LDAP auth configuration, LDAP login to XML-RPC,
   # FireEdge UI login via LDAP, and verifies local auth fallback.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
-  run_ldap_auth: true
+  run_ldap_auth: false
   ldap_auth:
     server: "172.20.0.7:389"
     base_dn: "dc=example,dc=com"

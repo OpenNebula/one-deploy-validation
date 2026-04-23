@@ -150,7 +150,7 @@
 
   - name: Fireedge service listens on the server
     ansible.builtin.shell: >
-      ss -tlpn | grep $(cat /etc/one/fireedge-server.conf | awk '/^port:/ {print $2}')
+      ss -tlpn | grep -m1 $(cat /etc/one/fireedge-server.conf | awk '/^port:/ {print $2}')
     register: firedge_socket
     failed_when: "firedge_socket.rc != 0"
     retries: 5

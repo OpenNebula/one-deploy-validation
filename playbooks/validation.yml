@@ -81,6 +81,7 @@
     verification_result: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_result | default({'No verification results were found': 'N/A'})}}"
     verification_comments: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_comments | default({}) }}"
     network_verification_results: "{{ hostvars[groups[frontend_group | d('frontend')][0]].network_verification_results | default({'No Network verification results were found': {'N/A':'N/A'}})}}"
+    conn_results_matrix: "{{ hostvars[groups[frontend_group | d('frontend')][0]].conn_results_matrix | default({}) }}"
     date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
     validation_vars: "{{ hostvars[groups[frontend_group | d('frontend')][0]].validation | default({}) }}"
   tasks:
@@ -142,4 +143,3 @@
           ******************************************************
           Verification report rendered to /tmp/cloud_verification_report.html
           ******************************************************
-

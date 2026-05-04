@@ -66,7 +66,7 @@
 # Modify for Debian and RH-based distros        
 - name: Verify OpenNebula private repos on the Debian-based OS
   ansible.builtin.shell: >
-    grep -Ri opennebula /etc/apt/sources.list.d/ 2>/dev/null | head -1 | cut -d: -f1 | xargs cat | grep '^deb' | awk '{print $2}'
+    grep -Ri opennebula /etc/apt/sources.list.d/ 2>/dev/null  | egrep -o 'https?://[^ ]+' 
   register: debian_repos_list
   failed_when: false
   when: ansible_os_family == "Debian"

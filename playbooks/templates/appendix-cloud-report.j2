@@ -199,7 +199,7 @@
 {% set readiness_total = counts.pass + counts.fail + counts.warn %}
 {% set pct = ((counts.pass * 100 / readiness_total) | round(0, 'common')) | int if readiness_total > 0 else 0 %}
 {% set overall_status = 'fail' if counts.fail > 0 else ('warn' if counts.warn > 0 else 'pass') %}
-{% set arch = report_architecture | default({}) %}
+{% set arch = template_report_architecture | default({}) %}
 {% set arch_frontends = arch.frontends | default([]) %}
 {% set arch_hypervisors = arch.hypervisors | default([]) %}
 {% set arch_networks = arch.networks | default([]) %}

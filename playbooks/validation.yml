@@ -138,7 +138,7 @@
         verification_result: "{{ report_verification_result }}"
         verification_comments: "{{ report_verification_comments }}"
         network_verification_results: "{{ report_network_verification_results }}"
-        report_architecture: "{{ report_architecture | default({}) }}"
+        template_report_architecture: "{{ report_architecture | default({}) }}"
 
     - name: Print report location
       ansible.builtin.debug:

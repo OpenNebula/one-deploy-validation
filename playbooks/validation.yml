@@ -78,11 +78,12 @@
   gather_facts: false
   become: false
   vars:
-    verification_result: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_result | default({'No verification results were found': 'N/A'})}}"
-    verification_comments: "{{ hostvars[groups[frontend_group | d('frontend')][0]].verification_comments | default({}) }}"
-    network_verification_results: "{{ hostvars[groups[frontend_group | d('frontend')][0]].network_verification_results | default({'No Network verification results were found': {'N/A':'N/A'}})}}"
+    report_frontend_host: "{{ groups[frontend_group | d('frontend')][0] }}"
+    report_verification_result: "{{ hostvars[report_frontend_host].verification_result | default({'No verification results were found': 'N/A'}) }}"
+    report_verification_comments: "{{ hostvars[report_frontend_host].verification_comments | default({}) }}"
+    report_network_verification_results: "{{ hostvars[report_frontend_host].network_verification_results | default({'No Network verification results were found': {'N/A':'N/A'}}) }}"
     date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
-    validation_vars: "{{ hostvars[groups[frontend_group | d('frontend')][0]].validation | default({}) }}"
+    validation_vars: "{{ hostvars[report_frontend_host].validation | default({}) }}"
   tasks:
     - name: Get repository version
       ansible.builtin.shell: |
@@ -134,6 +135,9 @@
       vars:
         repo_version: "{{ repo_version_cmd.stdout }}"
         date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
+        verification_result: "{{ report_verification_result }}"
+        verification_comments: "{{ report_verification_comments }}"
+        network_verification_results: "{{ report_network_verification_results }}"
         report_architecture: "{{ report_architecture | default({}) }}"
 
     - name: Print report location
@@ -142,4 +146,3 @@
           ******************************************************
           Verification report rendered to /tmp/cloud_verification_report.html
           ******************************************************
-

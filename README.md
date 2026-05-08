@@ -60,6 +60,7 @@ Ensure that your Python virtual environment is activated before running the play
 The execution of the all the tests produces the following output files on the Ansible controller (e.g. laptop):
 
 - `/tmp/cloud_verification_report.html`
+- `/tmp/cloud_verification_report.pdf`
 - `/tmp/conn-matrix-report.html`
 - `/tmp/conn-matrix-raw-data.json`
 - `/tmp/fe_ha_report.html`

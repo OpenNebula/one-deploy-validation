@@ -502,9 +502,26 @@
         network_verification_results: "{{ report_network_verification_results }}"
         template_report_architecture: "{{ discovered_report_architecture | default({}) }}"
 
+    - name: Render PDF print stylesheet
+      ansible.builtin.template:
+        src: "print_fix.css"
+        dest: /tmp/print_fix.css
+
+    - name: Generate PDF report
+      ansible.builtin.command:
+        argv:
+          - weasyprint
+          - -s
+          - /tmp/print_fix.css
+          - /tmp/cloud_verification_report.html
+          - /tmp/cloud_verification_report.pdf
+      register: report_pdf_cmd
+      changed_when: report_pdf_cmd.rc == 0
+
     - name: Print report location
       ansible.builtin.debug:
         msg: |
           ******************************************************
           Verification report rendered to /tmp/cloud_verification_report.html
+          PDF report rendered to /tmp/cloud_verification_report.pdf
           ******************************************************

@@ -14,6 +14,7 @@ The following packages must be installed on the host:
 - `python3-pip`
 - `python3-venv`
 - `make`
+- `weasyprint`
 
 ## Environment Setup
 

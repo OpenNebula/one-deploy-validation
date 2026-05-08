@@ -78,14 +78,14 @@
 
 - name: Verify OpenNebula private repos on the Debian-based OS
   ansible.builtin.shell: >
-    grep -Ri opennebula /etc/apt/sources.list.d/ 2>/dev/null | head -1 | cut -d: -f1 | xargs cat | grep '^deb' | awk '{print $2}'
+    grep -Ri opennebula /etc/apt/sources.list.d/ 2>/dev/null | head -1 | cut -d: -f1 | xargs cat | grep '^deb' | awk '{for(i=1;i<=NF;i++) if ($i ~ /^https?:\/\//) {print $i; exit}}'
   register: debian_repos_list
   failed_when: false
   when: ansible_os_family == "Debian"
 
 - name: Verify OpenNebula private repos on the RH-based OS
   ansible.builtin.shell: >
-    grep -Ri opennebula /etc/yum.repos.d/*.repo 2>/dev/null | head -1 | cut -d: -f1 | xargs cat | grep baseurl | awk '{print $3}'
+    grep -Ri opennebula /etc/yum.repos.d/*.repo 2>/dev/null | head -1 | cut -d: -f1 | xargs cat | grep '^baseurl=' | cut -d= -f2-
   register: rh_repos_list
   failed_when: false
   when: ansible_os_family == "RedHat"
@@ -273,4 +273,3 @@
 - name: Get marketplace status
   debug:
     msg: "{{ marketplace_list.stdout | from_json | json_query('MARKETPLACE_POOL.MARKETPLACE') | length }}"
-

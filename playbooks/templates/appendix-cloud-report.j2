@@ -9,7 +9,7 @@
   :root{--one-blue:#1a7ba4;--one-blue-light:#e8f4f9;--one-blue-mid:#c2dfed;--bg:#fff;--surface:#f8fafc;--surface2:#f1f5f9;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--pass:#15803d;--pass-bg:#f0fdf4;--pass-bd:#bbf7d0;--fail:#b91c1c;--fail-bg:#fef2f2;--fail-bd:#fecaca;--warn:#b45309;--warn-bg:#fffbeb;--warn-bd:#fde68a;--info:#1e40af;--info-bg:#eff6ff;--info-bd:#bfdbfe;--mono:'IBM Plex Mono',monospace}
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:14px;line-height:1.6}
-  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px}
+  .wrap{max-width:1200px;margin:0 auto;padding:40px 24px}
   .header{display:flex;align-items:center;gap:24px;padding:24px 32px;background:var(--bg);border:1px solid var(--border);border-left:4px solid var(--one-blue);border-radius:10px;margin-bottom:24px}
   .header-logo img{height:52px;width:auto;display:block}
   .header-div{width:1px;height:52px;background:var(--border);flex-shrink:0}
@@ -27,12 +27,31 @@
   .rtable,.gtable{width:100%;border-collapse:collapse;border:1px solid var(--border)}.rtable{border-radius:0 0 8px 8px;overflow:hidden}.rtable td,.gtable td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}.rtable tr:last-child td,.gtable tr:last-child td{border-bottom:none}.rtable tr:hover td,.gtable tr:hover td{background:var(--surface)}.gtable th{padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);border-bottom:2px solid var(--border);text-align:left;font-weight:700;background:var(--surface2)}.bench-table{table-layout:fixed;min-width:620px}.net-table{width:max-content;min-width:1100px;table-layout:auto}.net-table th,.net-table td{white-space:nowrap}
   .status-cell{width:96px}.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono);white-space:nowrap}.bp{background:var(--pass-bg);color:var(--pass);border:1px solid var(--pass-bd)}.bf{background:var(--fail-bg);color:var(--fail);border:1px solid var(--fail-bd)}.bw{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-bd)}.bi{background:var(--info-bg);color:var(--info);border:1px solid var(--info-bd)}.score-cell{font-size:20px;font-weight:700;line-height:1;text-align:center;font-family:'IBM Plex Sans',sans-serif}
   .cn{font-weight:600;color:var(--text)}.cd{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:2px;word-break:break-word;white-space:pre-wrap}.comment{margin-top:8px;padding:9px 12px;background:#fefce8;border:1px solid #fde68a;border-left:3px solid #d97706;border-radius:6px;font-size:12px;color:#78350f;line-height:1.6}.comment-lbl{font-weight:700;color:#b45309;margin-right:6px;font-family:var(--mono);font-size:11px}
-  .subtable{width:100%;border-collapse:collapse;margin-top:8px;border:1px solid var(--border);background:#fff}.subtable th,.subtable td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.subtable tr:last-child td{border-bottom:none}.subtable th{background:var(--surface2);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-size:10px;font-weight:700;text-align:left}.subtable td.num,.subtable th.num{text-align:right}.subblock{margin-top:8px}.mono{font-family:var(--mono)}
+  .subtable{width:100%;border-collapse:collapse;margin-top:8px;border:1px solid var(--border);background:#fff}.subtable th,.subtable td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.subtable tr:last-child td{border-bottom:none}.subtable th{background:var(--surface2);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-size:10px;font-weight:700;text-align:left}.subtable td.num,.subtable th.num{text-align:right}.subblock{margin-top:8px}.mono{font-family:var(--mono)}.record-table th[scope="row"]{width:30%;background:var(--surface2);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-size:10px;font-weight:700}
   .data-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px}.data-section .section-title{margin-bottom:14px}.table-scroll{overflow-x:auto;display:block;max-width:100%}.mini-pre,pre{padding:12px 14px;background:#fff;border:1px solid var(--border);border-left:3px solid var(--one-blue);border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;overflow:auto;white-space:pre-wrap}.mini-pre{margin-top:4px;max-height:260px}pre{max-height:560px}.num{text-align:right;font-family:var(--mono)}.matrix-ok{background:var(--pass-bg);color:var(--pass);font-family:var(--mono);font-weight:600}.matrix-bad{background:var(--fail-bg);color:var(--fail);font-family:var(--mono);font-weight:600}.matrix-warn{background:var(--warn-bg);color:var(--warn);font-family:var(--mono);font-weight:600}
   #table-networks td:last-child{max-width:0}
   .footer{display:flex;align-items:center;justify-content:space-between;padding-top:24px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}.footer a{color:var(--one-blue);text-decoration:none}.footer a:hover{text-decoration:underline}
   @media(max-width:640px){.cards{grid-template-columns:repeat(2,1fr)}.anodes{grid-template-columns:1fr}.header{flex-direction:column;align-items:flex-start}.header-meta{align-items:flex-start}.footer{flex-direction:column;gap:12px;align-items:flex-start}}
-  @media print{body{background:#fff}.wrap{padding:20px}.rst-header{cursor:default}}
+  @page{size:1200px 297mm;margin:14mm 18mm}
+  @media print{
+    body{background:#fff;font-size:12px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+    .wrap{width:1200px;max-width:none;padding:0}
+    .header,.banner,.cards,.pgwrap,.arch-section,.footer{break-inside:avoid;page-break-inside:avoid}
+    .rst-section,.data-section{break-inside:auto;page-break-inside:auto}
+    .card,.anode,.subblock,.mini-pre,pre{break-inside:avoid;page-break-inside:avoid}
+    .cards{display:table;width:100%;table-layout:fixed}
+    .card{display:table-cell;width:25%}
+    .rst-header{cursor:default;break-inside:avoid;page-break-inside:avoid}
+    .tog{display:none}
+    .table-scroll{overflow:visible;max-width:none}
+    .net-table{width:100%;min-width:0;table-layout:fixed}
+    .gtable,.subtable,.rtable{break-inside:auto;page-break-inside:auto}
+    thead{display:table-header-group}
+    tfoot{display:table-footer-group}
+    tr,td,th{break-inside:avoid;page-break-inside:avoid}
+    .gtable th,.subtable th,.rtable td,.gtable td,.subtable td{font-size:11px}
+    .score-cell{font-size:18px}
+  }
 </style>
 </head>
 <body>
@@ -91,66 +110,40 @@
   </table>
 {%- endmacro %}
 
-{% macro render_ping_summary_table(value) -%}
-  <table class="subtable">
-    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-    <tbody>
-      <tr><td>Destination</td><td>{{ value.destination | default(value.destination_ip | default('N/A')) }}</td></tr>
-      <tr><td>Resolved IP</td><td class="mono">{{ value.destination_ip | default('N/A') }}</td></tr>
-      <tr><td>Packets</td><td class="mono">{{ value.packets_received | default('N/A') }}/{{ value.packets_transmitted | default('N/A') }}</td></tr>
-      <tr><td>Packet Loss</td><td class="mono">{{ value.packet_loss_percent | default('N/A') }}%</td></tr>
-      <tr><td>Avg RTT</td><td class="mono">{% if value.round_trip_ms_avg is defined and value.round_trip_ms_avg is not none %}{{ value.round_trip_ms_avg }} ms{% else %}N/A{% endif %}</td></tr>
-      <tr><td>Min RTT</td><td class="mono">{% if value.round_trip_ms_min is defined and value.round_trip_ms_min is not none %}{{ value.round_trip_ms_min }} ms{% else %}N/A{% endif %}</td></tr>
-      <tr><td>Max RTT</td><td class="mono">{% if value.round_trip_ms_max is defined and value.round_trip_ms_max is not none %}{{ value.round_trip_ms_max }} ms{% else %}N/A{% endif %}</td></tr>
-    </tbody>
-  </table>
-{%- endmacro %}
-
-{% macro render_ping_detail_table(title, value) -%}
+{% macro render_record_table(title, rows) -%}
   <div class="subblock">
-    <div class="cd"><strong>{{ title }}</strong></div>
-    <div class="table-scroll">
-      <table class="gtable net-table">
-        <colgroup>
-          <col style="width:15%">
-          <col style="width:9%">
-          <col style="width:14%">
-          <col style="width:14%">
-          <col style="width:8%">
-          <col style="width:8%">
-          <col style="width:10%">
-          <col style="width:11%">
-          <col style="width:11%">
-        </colgroup>
-        <thead>
-          <tr>
-            <th>destination_ip</th>
-            <th class="num">data_bytes</th>
-            <th>destination</th>
-            <th>response_ip</th>
-            <th class="num">tx</th>
-            <th class="num">rx</th>
-            <th class="num">loss %</th>
-            <th class="num">avg_rtt_ms</th>
-            <th class="num">max_rtt_ms</th>
-          </tr>
-        </thead>
+    {% if title != '' %}<div class="cd"><strong>{{ title }}</strong></div>{% endif %}
+      <table class="subtable record-table">
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
         <tbody>
-          <tr>
-            <td class="mono">{{ value.destination_ip | default('N/A') }}</td>
-            <td class="num">{{ value.data_bytes | default('N/A') }}</td>
-            <td>{{ value.destination | default('N/A') }}</td>
-            <td class="mono">{{ value.responses[0].response_ip if value.responses is defined and (value.responses | length) > 0 else (value.destination_ip | default('N/A')) }}</td>
-            <td class="num">{{ value.packets_transmitted | default('N/A') }}</td>
-            <td class="num">{{ value.packets_received | default('N/A') }}</td>
-            <td class="num">{{ value.packet_loss_percent | default('N/A') }}</td>
-            <td class="num">{{ value.round_trip_ms_avg | default('N/A') }}</td>
-            <td class="num">{{ value.round_trip_ms_max | default('N/A') }}</td>
-          </tr>
+        {% for row in rows %}
+          <tr><th scope="row">{{ row.label }}</th><td class="{{ 'mono' if row.mono | default(false) else '' }}">{{ row.value }}</td></tr>
+        {% endfor %}
         </tbody>
       </table>
-    </div>
   </div>
+{%- endmacro %}
+
+{% macro render_ping_record_table(title, test_vm_ip, value) -%}
+  {{ render_record_table(title, [
+    {'label': 'Test VM IP', 'value': test_vm_ip, 'mono': true},
+    {'label': 'Destination IP', 'value': value.destination_ip | default('N/A'), 'mono': true},
+    {'label': 'Data Bytes', 'value': value.data_bytes | default('N/A')},
+    {'label': 'Destination', 'value': value.destination | default('N/A')},
+    {'label': 'Response IP', 'value': value.responses[0].response_ip if value.responses is defined and (value.responses | length) > 0 else (value.destination_ip | default('N/A')), 'mono': true},
+    {'label': 'Packets Transmitted', 'value': value.packets_transmitted | default('N/A')},
+    {'label': 'Packets Received', 'value': value.packets_received | default('N/A')},
+    {'label': 'Packet Loss %', 'value': value.packet_loss_percent | default('N/A')},
+    {'label': 'Average RTT (ms)', 'value': value.round_trip_ms_avg | default('N/A')},
+    {'label': 'Maximum RTT (ms)', 'value': value.round_trip_ms_max | default('N/A')}
+  ]) }}
+{%- endmacro %}
+
+{% macro render_dns_record_table(title, test_vm_ip, value) -%}
+  {{ render_record_table(title, [
+    {'label': 'Test VM IP', 'value': test_vm_ip, 'mono': true},
+    {'label': 'DNS Result', 'value': value | replace('"', ''), 'mono': true}
+  ]) }}
 {%- endmacro %}
 
 {% macro render_special_value(check_name, value) -%}
@@ -229,7 +222,7 @@
 
   <div class="banner status-{{ overall_status }}"><span>{% if overall_status == 'fail' %}NOT READY - FIX FAILURES FIRST{% elif overall_status == 'warn' %}READY WITH WARNINGS - REVIEW NOTES{% else %}READY - ALL CHECKS PASSED{% endif %}</span></div>
   <div class="cards"><div class="card cp"><div class="num">{{ counts.pass }}</div><div class="lbl">Passed</div></div><div class="card cf"><div class="num">{{ counts.fail }}</div><div class="lbl">Failed</div></div><div class="card cw"><div class="num">{{ counts.warn }}</div><div class="lbl">Warnings</div></div><div class="card ct"><div class="num">{{ total }}</div><div class="lbl">Total</div></div></div>
-  <div class="pgwrap"><div class="pglbl"><span>Overall Readiness</span><span id="pct-lbl">0%</span></div><div class="pgbar"><div class="pgfill" id="pgfill" style="width:0%"></div></div></div>
+  <div class="pgwrap"><div class="pglbl"><span>Overall Readiness</span><span id="pct-lbl">{{ pct }}% passing</span></div><div class="pgbar"><div class="pgfill" id="pgfill" style="width:{{ pct }}%"></div></div></div>
 
   {% if arch_frontends | length > 0 or arch_hypervisors | length > 0 or arch_networks | length > 0 %}
   <div class="arch-section">
@@ -315,76 +308,21 @@
         <td class="status-cell">{{ badge(status) }}</td>
         <td>
           <div class="cn">{{ network_name }}</div>
-          <div class="table-scroll subblock">
-            <table class="gtable net-table">
-              <colgroup>
-                <col style="width:18%">
-                <col style="width:14%">
-                <col style="width:10%">
-                <col style="width:14%">
-                <col style="width:10%">
-                <col style="width:10%">
-                <col style="width:12%">
-                <col style="width:12%">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>test_vm_ip</th>
-                  <th>check</th>
-                  <th>destination_ip</th>
-                  <th>destination</th>
-                  <th class="num">data_bytes</th>
-                  <th class="num">tx/rx</th>
-                  <th class="num">loss %</th>
-                  <th class="num">avg_rtt_ms</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% set test_vm_ip = results.get('Test VM IP', 'N/A') %}
-                {% set gw_ping_raw = results.get('\nNetwork GW ping, packet received', results.get('Network GW ping, packet received')) %}
-                {% set ext_ping_raw = results.get('\nExternal Host ping: ', results.get('External Host ping: ', results.get('\nExternal Host ping::', results.get('External Host ping::')))) %}
-                {% set gw_ping = (gw_ping_raw | from_json) if gw_ping_raw is string and (gw_ping_raw | trim | regex_search('^\\{')) else gw_ping_raw %}
-                {% set ext_ping = (ext_ping_raw | from_json) if ext_ping_raw is string and (ext_ping_raw | trim | regex_search('^\\{')) else ext_ping_raw %}
-                {% if gw_ping is mapping %}
-                <tr>
-                  <td class="mono">{{ test_vm_ip }}</td>
-                  <td>Network GW ping</td>
-                  <td class="mono">{{ gw_ping.destination_ip | default('N/A') }}</td>
-                  <td>{{ gw_ping.destination | default('N/A') }}</td>
-                  <td class="num">{{ gw_ping.data_bytes | default('N/A') }}</td>
-                  <td class="num">{{ gw_ping.packets_transmitted | default('N/A') }}/{{ gw_ping.packets_received | default('N/A') }}</td>
-                  <td class="num">{{ gw_ping.packet_loss_percent | default('N/A') }}</td>
-                  <td class="num">{{ gw_ping.round_trip_ms_avg | default('N/A') }}</td>
-                </tr>
-                {% endif %}
-                {% if ext_ping is mapping %}
-                <tr>
-                  <td class="mono">{{ test_vm_ip }}</td>
-                  <td>External Host ping</td>
-                  <td class="mono">{{ ext_ping.destination_ip | default('N/A') }}</td>
-                  <td>{{ ext_ping.destination | default('N/A') }}</td>
-                  <td class="num">{{ ext_ping.data_bytes | default('N/A') }}</td>
-                  <td class="num">{{ ext_ping.packets_transmitted | default('N/A') }}/{{ ext_ping.packets_received | default('N/A') }}</td>
-                  <td class="num">{{ ext_ping.packet_loss_percent | default('N/A') }}</td>
-                  <td class="num">{{ ext_ping.round_trip_ms_avg | default('N/A') }}</td>
-                </tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-          {% if gw_ping is mapping %}{{ render_ping_detail_table('Network GW ping details', gw_ping) }}{% endif %}
-          {% if ext_ping is mapping %}{{ render_ping_detail_table('External Host ping details', ext_ping) }}{% endif %}
-          {% if '\nExternal host DNS resolvation' in results or 'External host DNS resolvation' in results %}
-          <div class="subblock">
-            <div class="cd"><strong>External host DNS resolution</strong></div>
-            <div class="table-scroll">
-              <table class="gtable net-table">
-                <thead><tr><th>test_vm_ip</th><th>dns_result</th></tr></thead>
-                <tbody><tr><td class="mono">{{ test_vm_ip }}</td><td class="mono">{{ results.get('\nExternal host DNS resolvation', results.get('External host DNS resolvation', 'N/A')) | replace('"', '') }}</td></tr></tbody>
-              </table>
-            </div>
-          </div>
-          {% endif %}
+          {% set test_vm_ip = results.get('Test VM IP', 'N/A') %}
+          {% set gw_ping_raw = results.get('\nNetwork GW ping, packet received', results.get('Network GW ping, packet received')) %}
+          {% set ext_ping_raw = results.get('\nExternal Host ping: ', results.get('External Host ping: ', results.get('\nExternal Host ping::', results.get('External Host ping::')))) %}
+          {% set gw_ping = (gw_ping_raw | from_json) if gw_ping_raw is string and (gw_ping_raw | trim | regex_search('^\\{')) else gw_ping_raw %}
+          {% set ext_ping = (ext_ping_raw | from_json) if ext_ping_raw is string and (ext_ping_raw | trim | regex_search('^\\{')) else ext_ping_raw %}
+          {% set dns_result = results.get('\nExternal host DNS resolvation', results.get('External host DNS resolvation')) %}
+          {{ render_record_table('Validation Summary', [
+            {'label': 'Test VM IP', 'value': test_vm_ip, 'mono': true},
+            {'label': 'Gateway Check', 'value': 'Available' if gw_ping is mapping else 'Not available'},
+            {'label': 'External Ping Check', 'value': 'Available' if ext_ping is mapping else 'Not available'},
+            {'label': 'External DNS Resolution', 'value': dns_result | default('Not available') | replace('"', '')}
+          ]) }}
+          {% if gw_ping is mapping %}{{ render_ping_record_table('Network GW ping details', test_vm_ip, gw_ping) }}{% endif %}
+          {% if ext_ping is mapping %}{{ render_ping_record_table('External Host ping details', test_vm_ip, ext_ping) }}{% endif %}
+          {% if dns_result is defined and dns_result is not none %}{{ render_dns_record_table('External host DNS resolution', test_vm_ip, dns_result) }}{% endif %}
         </td>
       </tr>
     {% endfor %}
@@ -414,7 +352,7 @@
 </div>
 <script>
 var PCT={{ pct }};
-window.addEventListener('load',function(){var fill=document.getElementById('pgfill');var lbl=document.getElementById('pct-lbl');if(fill&&lbl){setTimeout(function(){fill.style.width=PCT+'%';lbl.textContent=PCT+'% passing';},150);}});
+window.addEventListener('load',function(){var fill=document.getElementById('pgfill');var lbl=document.getElementById('pct-lbl');if(fill&&lbl){fill.style.width=PCT+'%';lbl.textContent=PCT+'% passing';}});
 function toggleTable(tableId,toggleId){var table=document.getElementById(tableId);var toggle=document.getElementById(toggleId);if(!table||!toggle)return;if(table.style.display==='none'){table.style.display='';toggle.textContent='v';}else{table.style.display='none';toggle.textContent='>';}}
 </script>
 </body>

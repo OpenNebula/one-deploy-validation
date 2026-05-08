@@ -202,3 +202,27 @@ validation:
     # Configuration files
     oned_conf: /etc/one/oned.conf
     fireedge_conf: /etc/one/fireedge-server.conf
+
+  # REPORT SECTION: Target Architecture
+  # DESCRIPTION: Controls optional label overrides for the architecture section in the
+  # HTML report. Networks are discovered live from OpenNebula VNET and VM NIC data.
+  architecture:
+    frontend_role_label: "OpenNebula FE VM"
+    hypervisor_role_label: "KVM"
+    # Optional per-frontend overrides keyed by inventory hostname.
+    # Example:
+    # frontends:
+    #   fe:
+    #     network_ips:
+    #       - "10.125.0.10"
+    #       - "10.126.0.10"
+    frontends: {}
+    # Optional per-hypervisor overrides keyed by inventory hostname.
+    # Example:
+    # hypervisors:
+    #   h1:
+    #     network_ips:
+    #       - "10.125.208.6"
+    #       - "10.126.208.6"
+    #       - "10.127.208.6"
+    hypervisors: {}

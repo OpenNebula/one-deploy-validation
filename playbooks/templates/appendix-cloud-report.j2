@@ -1,544 +1,421 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
-	<title></title>
-    	<link href="https://fonts.googleapis.com/css2?family=Ubuntu&display=swap" rel="stylesheet">
-	<style type="text/css">
-		body {font-family: 'Ubuntu', sans-serif;}
-
-		/* Table styling reused from FE report for consistency */
-		.table_component {
-		    overflow: auto;
-		    width: 100%;
-		    margin-top: 0.18in;
-		    margin-bottom: 0.5in;
-		}
-
-		.table_component table {
-		    border: 1px solid #dededf;
-		    width: 100%;
-		    table-layout: fixed;
-		    border-collapse: collapse;
-		    border-spacing: 1px;
-		    text-align: left;
-		    font-size: 11pt;
-		}
-
-		.table_component caption {
-		    caption-side: top;
-		    text-align: left;
-		    font-weight: bold;
-		    margin-bottom: 6px;
-		}
-
-		.table_component th {
-		    border: 1px solid #dededf;
-		    background-color: #eceff1;
-		    color: #000000;
-		    padding: 8px;
-		    text-align: left;
-		}
-
-		.table_component td {
-		    border: 1px solid #dededf;
-		    background-color: #ffffff;
-		    color: #000000;
-		    padding: 8px;
-		}
-
-		/* Numeric columns should be right aligned */
-		.table_component td.num, .table_component th.num { text-align: right; }
-
-		/* Zebra rows */
-		.table_component tr:nth-child(even) td { background: #fbfbfb; }
-
-		/* Network tables should not span the full page - keep them readable */
-		.network_table {
-		    max-width: 760px; /* limits width so the table doesn't stretch full page */
-		    /* pin to the left of the page */
-		    margin-left: 0;
-		    margin-right: auto;
-		    width: auto;
-		    table-layout: auto;
-		    word-break: break-word;
-		}
-
-		.network_table td.aws_profile_cell {
-		    font-weight: 600;
-		    background-color: #f3f7ff !important;
-		}
-
-		@page { size: 8.5in 11in; margin-left: 1in; margin-right: 1in; margin-bottom: 0.5in }
-		p { line-height: 115%; text-align: left; orphans: 0; widows: 0; margin-bottom: 0.1in; direction: ltr; background: transparent }
-		h1 { line-height: 100%; text-align: justify; page-break-inside: auto; orphans: 0; widows: 0; margin-top: 0.33in; margin-bottom: 0.12in; direction: ltr; background: transparent; page-break-before: auto; page-break-after: auto }
-		h1.western { font-size: 18pt; font-weight: bold }
-		h1.cjk { font-size: 18pt; font-weight: bold }
-		h1.ctl { font-size: 18pt }
-		h2 { line-height: 100%; text-align: justify; page-break-inside: auto; orphans: 0; widows: 0; margin-top: 0.25in; margin-bottom: 0.10in; direction: ltr; background: transparent; page-break-before: auto; page-break-after: auto }
-		h2.western { font-size: 14pt; font-weight: bold }
-		h2.cjk { font-size: 14pt; font-weight: bold }
-		h2.ctl { font-size: 14pt }
-		a:link { color: #000080; text-decoration: underline }
-	</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenNebula Cloud Verification Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+  :root{--one-blue:#1a7ba4;--one-blue-light:#e8f4f9;--one-blue-mid:#c2dfed;--bg:#fff;--surface:#f8fafc;--surface2:#f1f5f9;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--pass:#15803d;--pass-bg:#f0fdf4;--pass-bd:#bbf7d0;--fail:#b91c1c;--fail-bg:#fef2f2;--fail-bd:#fecaca;--warn:#b45309;--warn-bg:#fffbeb;--warn-bd:#fde68a;--info:#1e40af;--info-bg:#eff6ff;--info-bd:#bfdbfe;--mono:'IBM Plex Mono',monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:14px;line-height:1.6}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px}
+  .header{display:flex;align-items:center;gap:24px;padding:24px 32px;background:var(--bg);border:1px solid var(--border);border-left:4px solid var(--one-blue);border-radius:10px;margin-bottom:24px}
+  .header-logo img{height:52px;width:auto;display:block}
+  .header-div{width:1px;height:52px;background:var(--border);flex-shrink:0}
+  .hm{flex:1}.hm h1{font-size:19px;font-weight:700;margin-bottom:4px}.hm p{color:var(--muted);font-size:12px;line-height:1.8}.hm strong{color:var(--one-blue)}
+  .header-meta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+  .role-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono);letter-spacing:.5px;background:var(--one-blue-light);border:1px solid var(--one-blue-mid);color:var(--one-blue)}
+  .ts{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .banner{padding:13px 20px;border-radius:8px;margin-bottom:24px;display:flex;align-items:center;gap:12px;font-weight:600;font-size:14px;border-left-width:4px;border-left-style:solid}
+  .status-pass{background:var(--pass-bg);border-color:var(--pass);color:var(--pass)}.status-fail{background:var(--fail-bg);border-color:var(--fail);color:var(--fail)}.status-warn{background:var(--warn-bg);border-color:var(--warn);color:var(--warn)}
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 16px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:96px}.card .num{display:block;width:100%;text-align:center;font-size:32px;font-weight:700;font-family:var(--mono);line-height:1;margin-bottom:4px}.card .lbl{display:block;width:100%;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+  .cp{border-top:3px solid var(--pass)}.cp .num{color:var(--pass)}.cf{border-top:3px solid var(--fail)}.cf .num{color:var(--fail)}.cw{border-top:3px solid var(--warn)}.cw .num{color:var(--warn)}.ct{border-top:3px solid var(--one-blue)}.ct .num{color:var(--one-blue)}
+  .pgwrap{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;margin-bottom:24px}.pglbl{display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px;color:var(--muted);font-weight:600}.pgbar{height:8px;background:var(--border);border-radius:999px;overflow:hidden}.pgfill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--pass),var(--one-blue));transition:width .9s cubic-bezier(.4,0,.2,1)}
+  .arch-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:24px}.arch-fe{text-align:center;padding:10px 20px;background:var(--one-blue-light);border:1px solid var(--one-blue-mid);border-radius:8px;margin:0 auto 6px;width:230px;color:var(--one-blue);font-weight:700;font-family:var(--mono);font-size:12px}.arch-fe small{display:block;color:var(--text);font-size:11px;font-weight:400;margin-top:3px}.ac{text-align:center;color:var(--muted);font-family:var(--mono);line-height:1.2}.anet{text-align:center;padding:7px;border-radius:4px;margin:3px 0;font-size:11px;font-weight:600;letter-spacing:.5px;font-family:var(--mono)}.nm{background:var(--pass-bg);border:1px solid var(--pass-bd);color:var(--pass)}.ns{background:var(--warn-bg);border:1px solid var(--warn-bd);color:var(--warn)}.np{background:var(--info-bg);border:1px solid var(--info-bd);color:var(--info)}.anodes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0}.anode{padding:10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;text-align:center;color:#7c3aed;font-size:11px;font-family:var(--mono)}.anode strong{display:block;color:var(--text);font-size:12px;margin-bottom:3px}
+  .rst-section,.data-section{margin-bottom:24px}.rst-header{width:100%;padding:11px 16px;background:var(--surface2);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;text-align:left}.rst-header h3,.section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}.tog{color:var(--muted);font-size:16px;font-family:var(--mono)}
+  .rtable,.gtable{width:100%;border-collapse:collapse;border:1px solid var(--border)}.rtable{border-radius:0 0 8px 8px;overflow:hidden}.rtable td,.gtable td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}.rtable tr:last-child td,.gtable tr:last-child td{border-bottom:none}.rtable tr:hover td,.gtable tr:hover td{background:var(--surface)}.gtable th{padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);border-bottom:2px solid var(--border);text-align:left;font-weight:700;background:var(--surface2)}.bench-table{table-layout:fixed;min-width:620px}.net-table{width:max-content;min-width:1100px;table-layout:auto}.net-table th,.net-table td{white-space:nowrap}
+  .status-cell{width:96px}.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono);white-space:nowrap}.bp{background:var(--pass-bg);color:var(--pass);border:1px solid var(--pass-bd)}.bf{background:var(--fail-bg);color:var(--fail);border:1px solid var(--fail-bd)}.bw{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-bd)}.bi{background:var(--info-bg);color:var(--info);border:1px solid var(--info-bd)}.score-cell{font-size:20px;font-weight:700;line-height:1;text-align:center;font-family:'IBM Plex Sans',sans-serif}
+  .cn{font-weight:600;color:var(--text)}.cd{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:2px;word-break:break-word;white-space:pre-wrap}.comment{margin-top:8px;padding:9px 12px;background:#fefce8;border:1px solid #fde68a;border-left:3px solid #d97706;border-radius:6px;font-size:12px;color:#78350f;line-height:1.6}.comment-lbl{font-weight:700;color:#b45309;margin-right:6px;font-family:var(--mono);font-size:11px}
+  .subtable{width:100%;border-collapse:collapse;margin-top:8px;border:1px solid var(--border);background:#fff}.subtable th,.subtable td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.subtable tr:last-child td{border-bottom:none}.subtable th{background:var(--surface2);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-size:10px;font-weight:700;text-align:left}.subtable td.num,.subtable th.num{text-align:right}.subblock{margin-top:8px}.mono{font-family:var(--mono)}
+  .data-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px}.data-section .section-title{margin-bottom:14px}.table-scroll{overflow-x:auto;display:block;max-width:100%}.mini-pre,pre{padding:12px 14px;background:#fff;border:1px solid var(--border);border-left:3px solid var(--one-blue);border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;overflow:auto;white-space:pre-wrap}.mini-pre{margin-top:4px;max-height:260px}pre{max-height:560px}.num{text-align:right;font-family:var(--mono)}.matrix-ok{background:var(--pass-bg);color:var(--pass);font-family:var(--mono);font-weight:600}.matrix-bad{background:var(--fail-bg);color:var(--fail);font-family:var(--mono);font-weight:600}.matrix-warn{background:var(--warn-bg);color:var(--warn);font-family:var(--mono);font-weight:600}
+  #table-networks td:last-child{max-width:0}
+  .footer{display:flex;align-items:center;justify-content:space-between;padding-top:24px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}.footer a{color:var(--one-blue);text-decoration:none}.footer a:hover{text-decoration:underline}
+  @media(max-width:640px){.cards{grid-template-columns:repeat(2,1fr)}.anodes{grid-template-columns:1fr}.header{flex-direction:column;align-items:flex-start}.header-meta{align-items:flex-start}.footer{flex-direction:column;gap:12px;align-items:flex-start}}
+  @media print{body{background:#fff}.wrap{padding:20px}.rst-header{cursor:default}}
+</style>
 </head>
-<body lang="en-US" link="#000080" vlink="#800000" bgcolor="#ffffff" dir="ltr">
-<div title="header"><p style="page-break-inside: auto; orphans: 0; widows: 0; margin-bottom: 0in; border: none; padding: 0in; background: transparent; page-break-before: auto; page-break-after: auto">
-	<br/>
+<body>
 
-	</p>
+{% macro status_from(value, comment='') -%}
+  {%- set text = ((value | string) ~ ' ' ~ (comment | default('') | string)) | lower -%}
+  {%- if 'unreachable' in text or 'inactive' in text or 'failed' in text or 'error' in text or (text | regex_search('(^|[^a-z])fault([^a-z]|$)')) -%}fail
+  {%- elif 'warning' in text or 'skipped' in text or 'unknown' in text or ' n/a' in text -%}warn
+  {%- elif value == 'ok' or value == 'reachable' or value == 'active' or value == 'enabled' or value == 'running' or 'ok -' in text or 'state=running' in text or ('packet_loss_percent' in text and ('packet_loss_percent": 0.0' in text or "packet_loss_percent': 0.0" in text or 'packet_loss_percent: 0.0' in text)) -%}pass
+  {%- else -%}info
+  {%- endif -%}
+{%- endmacro %}
 
-</div>
-<h1 class="western">Appendix 1 - Automated Cloud Verification Report</h1>
-<p style="margin-bottom: 0in; border: none; padding: 0in; background: transparent; page-break-before: auto; page-break-after: auto">
-<br/>
+{% macro badge(status) -%}
+  {%- if status == 'pass' -%}<span class="badge bp">PASS</span>
+  {%- elif status == 'fail' -%}<span class="badge bf">FAIL</span>
+  {%- elif status == 'warn' -%}<span class="badge bw">WARN</span>
+  {%- else -%}<span class="badge bi">INFO</span>
+  {%- endif -%}
+{%- endmacro %}
 
-</p>
+{% macro render_value(value) -%}
+  {%- if value is mapping or (value is sequence and value is not string) -%}
+    <pre class="mini-pre">{{ value | to_nice_json }}</pre>
+  {%- else -%}
+    {%- set value_text = value | string -%}
+    {%- if '\n' in value_text or value_text | trim | regex_search('^[{[]') -%}<pre class="mini-pre">{{ value_text }}</pre>
+    {%- else -%}<div class="cd">{{ value_text }}</div>
+    {%- endif -%}
+  {%- endif -%}
+{%- endmacro %}
 
+{% macro render_simple_list_table(values, label) -%}
+  <table class="subtable">
+    <thead><tr><th>{{ label }}</th></tr></thead>
+    <tbody>
+      {%- for item in values %}
+      <tr><td>{{ item }}</td></tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+{%- endmacro %}
 
-</div></br>
+{% macro render_kvm_hosts_table(values) -%}
+  <table class="subtable">
+    <thead><tr><th>Host</th><th>ID</th><th>State</th></tr></thead>
+    <tbody>
+      {%- for item in values %}
+      <tr>
+        <td>{{ item.hostname | default(item.name | default('N/A')) }}</td>
+        <td class="mono">{{ item.id | default('N/A') }}</td>
+        <td class="mono">{{ item.state | default('N/A') }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+{%- endmacro %}
 
-<h2 class="western">Metadata</h2>
-<p><b>Report generated:</b> {{ date }}</p>
-<p><b>Repository version:</b> {{ repo_version }}</p>
+{% macro render_ping_summary_table(value) -%}
+  <table class="subtable">
+    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Destination</td><td>{{ value.destination | default(value.destination_ip | default('N/A')) }}</td></tr>
+      <tr><td>Resolved IP</td><td class="mono">{{ value.destination_ip | default('N/A') }}</td></tr>
+      <tr><td>Packets</td><td class="mono">{{ value.packets_received | default('N/A') }}/{{ value.packets_transmitted | default('N/A') }}</td></tr>
+      <tr><td>Packet Loss</td><td class="mono">{{ value.packet_loss_percent | default('N/A') }}%</td></tr>
+      <tr><td>Avg RTT</td><td class="mono">{% if value.round_trip_ms_avg is defined and value.round_trip_ms_avg is not none %}{{ value.round_trip_ms_avg }} ms{% else %}N/A{% endif %}</td></tr>
+      <tr><td>Min RTT</td><td class="mono">{% if value.round_trip_ms_min is defined and value.round_trip_ms_min is not none %}{{ value.round_trip_ms_min }} ms{% else %}N/A{% endif %}</td></tr>
+      <tr><td>Max RTT</td><td class="mono">{% if value.round_trip_ms_max is defined and value.round_trip_ms_max is not none %}{{ value.round_trip_ms_max }} ms{% else %}N/A{% endif %}</td></tr>
+    </tbody>
+  </table>
+{%- endmacro %}
 
-<h2 class="western"><a name="_cgnw9t1vnxc8"></a> Verification of the OpenNebula cloud</h2></br>
+{% macro render_ping_detail_table(title, value) -%}
+  <div class="subblock">
+    <div class="cd"><strong>{{ title }}</strong></div>
+    <div class="table-scroll">
+      <table class="gtable net-table">
+        <colgroup>
+          <col style="width:15%">
+          <col style="width:9%">
+          <col style="width:14%">
+          <col style="width:14%">
+          <col style="width:8%">
+          <col style="width:8%">
+          <col style="width:10%">
+          <col style="width:11%">
+          <col style="width:11%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>destination_ip</th>
+            <th class="num">data_bytes</th>
+            <th>destination</th>
+            <th>response_ip</th>
+            <th class="num">tx</th>
+            <th class="num">rx</th>
+            <th class="num">loss %</th>
+            <th class="num">avg_rtt_ms</th>
+            <th class="num">max_rtt_ms</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">{{ value.destination_ip | default('N/A') }}</td>
+            <td class="num">{{ value.data_bytes | default('N/A') }}</td>
+            <td>{{ value.destination | default('N/A') }}</td>
+            <td class="mono">{{ value.responses[0].response_ip if value.responses is defined and (value.responses | length) > 0 else (value.destination_ip | default('N/A')) }}</td>
+            <td class="num">{{ value.packets_transmitted | default('N/A') }}</td>
+            <td class="num">{{ value.packets_received | default('N/A') }}</td>
+            <td class="num">{{ value.packet_loss_percent | default('N/A') }}</td>
+            <td class="num">{{ value.round_trip_ms_avg | default('N/A') }}</td>
+            <td class="num">{{ value.round_trip_ms_max | default('N/A') }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+{%- endmacro %}
 
-{# Categorize verification results for better readability #}
-{% set ns = namespace(
-    core_services=[],
-    vm_tests=[],
-    vm_ha=[],
-    fe_ha=[],
-    federation=[],
-    other=[]
-) %}
+{% macro render_special_value(check_name, value) -%}
+  {%- if check_name == 'Status of the registered KVM hosts' and value is sequence and value is not string -%}
+    {{ render_kvm_hosts_table(value) }}
+  {%- elif check_name == 'Datastores list' and value is sequence and value is not string -%}
+    {{ render_simple_list_table(value, 'Datastore') }}
+  {%- elif check_name == 'Registered marketplaces' and value is sequence and value is not string -%}
+    {{ render_simple_list_table(value, 'Marketplace') }}
+  {%- else -%}
+    {{ render_value(value) }}
+  {%- endif -%}
+{%- endmacro %}
 
-{% for k, v in verification_result.items() %}
-    {% if 'service' in k.lower() or 'opennebula version' in k.lower() or 'xml-rpc' in k.lower() %}
-        {% set _ = ns.core_services.append((k, v)) %}
-    {% elif 'test vm' in k.lower() or 'storage' in k.lower() and 'benchmark' not in k.lower() %}
-        {% set _ = ns.vm_tests.append((k, v)) %}
-    {% elif 'vm ha' in k.lower() or 'fencing' in k.lower() or 'host error' in k.lower() %}
-        {% set _ = ns.vm_ha.append((k, v)) %}
-    {% elif 'fe ha' in k.lower() or 'raft' in k.lower() or 'leader' in k.lower() %}
-        {% set _ = ns.fe_ha.append((k, v)) %}
-    {% elif 'federation' in k.lower() %}
-        {% set _ = ns.federation.append((k, v)) %}
-    {% else %}
-        {% set _ = ns.other.append((k, v)) %}
-    {% endif %}
+{% macro render_check_table(items, section_title, table_id) -%}
+  {%- if items | length > 0 -%}
+  <section class="rst-section">
+    <button class="rst-header" type="button" onclick="toggleTable('table-{{ table_id }}', 'tog-{{ table_id }}')">
+      <h3>{{ section_title }} ({{ items | length }} checks)</h3><span class="tog" id="tog-{{ table_id }}">v</span>
+    </button>
+    <table class="rtable" id="table-{{ table_id }}"><tbody>
+      {%- for k, v in items %}
+      {%- set comment = ((verification_comments | default({})).get(k, '') | trim) %}
+      {%- set status = status_from(v, comment) | trim %}
+      <tr><td class="status-cell">{{ badge(status) }}</td><td><div class="cn">{{ k }}</div>{{ render_special_value(k, v) }}{% if comment != '' %}<div class="comment"><span class="comment-lbl">NOTE</span>{{ comment }}</div>{% endif %}</td></tr>
+      {%- endfor %}
+    </tbody></table>
+  </section>
+  {%- endif -%}
+{%- endmacro %}
+
+{% set checks = verification_result | default({}) %}
+{% set comments = verification_comments | default({}) %}
+{% set counts = namespace(pass=0, fail=0, warn=0, info=0) %}
+{% for k, v in checks.items() %}
+  {% set status = status_from(v, comments.get(k, '')) | trim %}
+  {% if status == 'pass' %}{% set counts.pass = counts.pass + 1 %}{% elif status == 'fail' %}{% set counts.fail = counts.fail + 1 %}{% elif status == 'warn' %}{% set counts.warn = counts.warn + 1 %}{% else %}{% set counts.info = counts.info + 1 %}{% endif %}
+{% endfor %}
+{% if validation_vars.networks_verification | default(false) and network_verification_results is defined %}
+  {% for net_name, net_results in network_verification_results.items() %}
+    {% set status = status_from(net_results) | trim %}
+    {% if status == 'pass' %}{% set counts.pass = counts.pass + 1 %}{% elif status == 'fail' %}{% set counts.fail = counts.fail + 1 %}{% elif status == 'warn' %}{% set counts.warn = counts.warn + 1 %}{% else %}{% set counts.info = counts.info + 1 %}{% endif %}
+  {% endfor %}
+{% endif %}
+{% set total = counts.pass + counts.fail + counts.warn %}
+{% set readiness_total = counts.pass + counts.fail + counts.warn %}
+{% set pct = ((counts.pass * 100 / readiness_total) | round(0, 'common')) | int if readiness_total > 0 else 0 %}
+{% set overall_status = 'fail' if counts.fail > 0 else ('warn' if counts.warn > 0 else 'pass') %}
+{% set arch = template_report_architecture | default({}) %}
+{% set arch_frontends = arch.frontends | default([]) %}
+{% set arch_hypervisors = arch.hypervisors | default([]) %}
+{% set arch_networks = arch.networks | default([]) %}
+{% set arch_pre_networks = arch_networks[:2] %}
+{% set arch_post_networks = arch_networks[2:] %}
+
+{% set ns = namespace(core_services=[], vm_tests=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], other=[]) %}
+{% for k, v in checks.items() %}
+  {% set kl = k | lower %}
+  {% if 'oneflow' in kl %}{% set _ = ns.oneflow.append((k, v)) %}
+  {% elif 'ldap' in kl or 'rpc2' in kl %}{% set _ = ns.ldap.append((k, v)) %}
+  {% elif 'service' in kl or 'xml-rpc' in kl or 'oned version' in kl or 'repository' in kl or 'datastore' in kl or 'marketplace' in kl or 'registered kvm' in kl or 'hosts status' in kl %}{% set _ = ns.core_services.append((k, v)) %}
+  {% elif 'test vm' in kl or ('storage' in kl and 'benchmark' not in kl) or 'template' in kl %}{% set _ = ns.vm_tests.append((k, v)) %}
+  {% elif 'vm ha' in kl or 'fencing' in kl or 'host error' in kl %}{% set _ = ns.vm_ha.append((k, v)) %}
+  {% elif 'fe ha' in kl or 'leader' in kl or 'vip' in kl or 'config diretory' in kl %}{% set _ = ns.fe_ha.append((k, v)) %}
+  {% elif 'federation' in kl %}{% set _ = ns.federation.append((k, v)) %}
+  {% else %}{% set _ = ns.other.append((k, v)) %}
+  {% endif %}
 {% endfor %}
 
-{# Macro to render a table section #}
-{% macro render_verification_table(items, section_title) %}
-{% if items | length > 0 %}
-<h3 class="western">{{ section_title }}</h3>
-<table width="656" cellpadding="3" cellspacing="0" style="page-break-before: auto; page-break-after: auto; margin-bottom: 0.25in">
-	<col width="281"/>
-	<col width="200"/>
-	<col width="260"/>
-	<tr valign="top">
-		<td width="300" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			<font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Verification Point</b></font></font></p>
-		</td>
-		<td width="90" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			<font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Result</b></font></font></p>
-		</td>
-		<td width="260" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			<font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Comments</b></font></font></p>
-		</td>
-	</tr>
-  	{% for k, v in (verification_result | default({})).items() %}
-	    {% set comment = ((verification_comments | default({})).get(k, '') | trim) %}
-		<tr valign="top">
-		<td width="300" height="21" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			<b>{{ k }}</b></p>
-		</td>
-		<td width="90" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-		    {% if comment == '' %}
-  		    {{ v }}
-			{% endif %}
-			</p>
-		</td>
-		<td width="260" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-          	{{ comment }}
-			</p>
-		</td>
-	</tr>
-	{% endfor %}
-</table>
-{% endif %}
-{% endmacro %}
+<div class="wrap">
+  <div class="header">
+    <div class="header-logo"><a href="https://opennebula.io" target="_blank" rel="noopener"><img src="data:image/png;base64,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08lMpLaX24U04wdfDUkL572i411oucFyttTJS1dO/jilYcFp/wC+xTtp3eTrIaKOG+6dZVztGHT00/RcXiWkHn6j7F1+0fYLYdQ1UlxsNT8C1shy+MR8UEh58+HkWn1cuXUoxm3dddMn6NlXZZGZ5SCoeB7izKtXVNFVtBk39+iz7KK6W55EGSD2ag+CbRdvV+1JbZLXZ6JtlpZmlsz2y9JM8HrAdgBoPgM+Kh9zHtDS5rgHDIJHWO9WT0Tu5UdLUR1WrLsK3hIJpKQFsZPcXnziPUAfFbvaVsNptV3uCuoLxDZ6aClZTx0sdFxNaG56sOHf3L8irqOA9XHoO3X/AKv2e03Krb102ruA0/4Fp9zf8X7986j+wp7XA7GtnR2eW+vpDdhcfK5WycXQdFw4GMfGOV3yo66Rss7nsOQVqrXA+CkZHIMEe6IiKKrBERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERf//Z" alt="OpenNebula"></a></div><div class="header-div"></div>
+    <div class="hm"><h1>Automated Cloud Verification Report</h1><p>Generated: <strong>{{ date }}</strong> &nbsp;.&nbsp; Repository version: <strong>{{ repo_version }}</strong></p><p>{{ arch.summary | default('OpenNebula installation verification results, network validation, benchmark data, and validation variables.') | safe }}</p></div>
+    <div class="header-meta"><span class="role-pill">Cloud Verification</span><span class="ts">{{ date }}</span></div>
+  </div>
 
-{# Render tables in logical order #}
-{{ render_verification_table(ns.core_services, "Core Services") }}
-{{ render_verification_table(ns.vm_tests, "VM Instantiation Tests") }}
-{{ render_verification_table(ns.vm_ha, "VM High Availability") }}
-{{ render_verification_table(ns.fe_ha, "Frontend High Availability") }}
-{{ render_verification_table(ns.federation, "Federation Configuration") }}
-{{ render_verification_table(ns.other, "Other Checks") }}
+  <div class="banner status-{{ overall_status }}"><span>{% if overall_status == 'fail' %}NOT READY - FIX FAILURES FIRST{% elif overall_status == 'warn' %}READY WITH WARNINGS - REVIEW NOTES{% else %}READY - ALL CHECKS PASSED{% endif %}</span></div>
+  <div class="cards"><div class="card cp"><div class="num">{{ counts.pass }}</div><div class="lbl">Passed</div></div><div class="card cf"><div class="num">{{ counts.fail }}</div><div class="lbl">Failed</div></div><div class="card cw"><div class="num">{{ counts.warn }}</div><div class="lbl">Warnings</div></div><div class="card ct"><div class="num">{{ total }}</div><div class="lbl">Total</div></div></div>
+  <div class="pgwrap"><div class="pglbl"><span>Overall Readiness</span><span id="pct-lbl">0%</span></div><div class="pgbar"><div class="pgfill" id="pgfill" style="width:0%"></div></div></div>
 
-{% if all_federation_results is defined and all_federation_results | length > 0 %}
-<h3 class="western">Federation Detailed Results (All Zones)</h3>
-<p style="margin-bottom: 0.15in"><i>Consolidated federation validation results across all zones/frontends.</i></p>
-
-{# Normalize check names by removing " on <hostname>" suffix and group by base check name #}
-{% set ns_fed = namespace(normalized_checks={}) %}
-{% for host, results in all_federation_results.items() %}
-	{% for check, value in results.items() %}
-		{# Remove " on <hostname>" from check name to normalize it #}
-		{% set base_check = check | regex_replace(' on [^\\s]+$', '') %}
-		{% if base_check not in ns_fed.normalized_checks %}
-			{% set _ = ns_fed.normalized_checks.update({base_check: {}}) %}
-		{% endif %}
-		{# Store value for this host under the normalized check name #}
-		{% set _ = ns_fed.normalized_checks[base_check].update({host: value}) %}
-	{% endfor %}
-{% endfor %}
-
-{# Get list of hosts #}
-{% set fed_hosts = all_federation_results.keys() | list %}
-
-<div class="table_component" role="region" tabindex="0">
-	<table style="border: 1px solid #dededf; width: 100%; border-collapse: collapse; border-spacing: 1px; font-size: 10pt;">
-		<colgroup>
-			<col style="width: 250px; min-width: 200px;">
-			{% for host in fed_hosts %}
-				<col style="width: auto;">
-			{% endfor %}
-		</colgroup>
-		<tr>
-			<th style="background-color: #666666; color: #ffffff; border: 1.00pt solid #000000; padding: 8px; text-align: left; font-size: 11pt; white-space: normal; word-wrap: break-word;">Check</th>
-			{% for host in fed_hosts %}
-				<th style="background-color: #666666; color: #ffffff; border: 1.00pt solid #000000; padding: 8px; text-align: center; font-size: 11pt; white-space: normal; word-wrap: break-word;">{{ host }}</th>
-			{% endfor %}
-		</tr>
-		{% for check, host_values in ns_fed.normalized_checks.items() %}
-		<tr>
-			<td style="border: 1.00pt solid #000000; padding: 8px; font-weight: normal; font-size: 10pt; white-space: normal; word-wrap: break-word; vertical-align: top;">{{ check }}</td>
-			{% for host in fed_hosts %}
-				{% set result = host_values.get(host, 'N/A') %}
-				{% set result_str = result|string|lower %}
-				{# Determine status type for color coding #}
-				{% if result == 'ok' or result == 'reachable' or result == 'active' or result == 'enabled' or result == 'running' or 'ok -' in result_str %}
-					{% set status_color = '#d4edda' %}
-				{% elif result == 'unreachable' or result == 'inactive' or result == 'failed' or result == 'unknown' or 'error' in result_str %}
-					{% set status_color = '#f8d7da' %}
-				{% elif 'warning' in result_str %}
-					{% set status_color = '#fff3cd' %}
-				{% elif result == 'N/A' %}
-					{% set status_color = '#e9ecef' %}
-				{% else %}
-					{% set status_color = '#ffffff' %}
-				{% endif %}
-				<td style="background: {{ status_color }}; border: 1.00pt solid #000000; padding: 8px; text-align: center; font-size: 10pt; white-space: normal; word-wrap: break-word; vertical-align: top;">{{ result }}</td>
-			{% endfor %}
-		</tr>
-		{% endfor %}
-	</table>
-</div>
-{% endif %}
-</div>
-
-
-{% if validation_vars['networks_verification'] == true and network_verification_results | length > 0 %}
-
-<div class="table_component" role="region" tabindex="0">
-
-  <h2 class="western">Virtual Networks validation results</h2>
-<table width="656" cellpadding="3" cellspacing="0" style="page-break-before: auto; page-break-after: auto">
-       <col width="281"/>
-        <col width="200"/>
-        <col width="260"/>
-        <tr valign="top">
-
-                <td width="300" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-                        <font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Network name</b></font></font></p>
-                </td>
-                <td width="90" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-                        <font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Result</b></font></font></p>
-                </td>
-                <td width="260" bgcolor="#666666" style="background: #666666; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-                        <font color="#ffffff"><font size="3" style="font-size: 12pt"><b>Comments</b></font></font></p>
-                </td>
-        </tr>
-         {% for k, v in network_verification_results.items() %}
-        <tr valign="top">
-                <td width="300" height="21" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			<b>{{ k }}</b></p>
-                </td>
-                <td width="90" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-			{% for test, value in v.items() %}
-                        <b>{{ test }}</b>: {{ value }}</p>
-                        {% endfor %}
-                </td>
-                <td width="260" style="background: transparent; border: 1.00pt solid #000000; padding: 0.07in"><p align="left" style="page-break-inside: auto; orphans: 0; widows: 0; border: none; padding: 0in; background: transparent; page-break-after: auto">
-
-                        </p>
-                </td>
-        </tr>
+  {% if arch_frontends | length > 0 or arch_hypervisors | length > 0 or arch_networks | length > 0 %}
+  <div class="arch-section">
+    <div class="section-title">Target Architecture</div>
+    <div style="font-family:var(--mono);font-size:12px">
+      <div style="text-align:center;margin-bottom:6px">
+        <div class="arch-fe">
+          {{ arch.frontend_title | default('OpenNebula FE Servers' if arch_frontends | length > 1 else 'OpenNebula FE VM') }}
+          {% if arch_frontends | length == 1 %}
+            {% set frontend = arch_frontends[0] %}
+            {% if frontend.network_ips | default([]) | length > 0 %}
+          <small>{{ frontend.network_ips | join(' · ') }}</small>
+            {% elif frontend.detail | default('') != '' %}
+          <small>{{ frontend.detail }}</small>
+            {% elif frontend.label | default('') != '' %}
+          <small>{{ frontend.label }}</small>
+            {% endif %}
+          {% else %}
+            {% for frontend in arch_frontends %}
+              {% if frontend.network_ips | default([]) | length > 0 %}
+          <small>{{ frontend.label }} · {{ frontend.network_ips | join(' · ') }}</small>
+              {% elif frontend.detail | default('') != '' %}
+          <small>{{ frontend.label }} · {{ frontend.detail }}</small>
+              {% else %}
+          <small>{{ frontend.label }}</small>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+      <div class="ac">│<br>│</div>
+      {% for network in arch_pre_networks %}
+      <div class="anet {{ network.class | default('nm') }}">{{ network.label }} — {{ network.cidr }}</div>
+      {% endfor %}
+      {% if arch_hypervisors | length > 0 %}
+      <div class="anodes">
+        {% for hypervisor in arch_hypervisors %}
+        <div class="anode">
+          <strong>{{ hypervisor.label }}{% if hypervisor.role_label | default('') != '' %} ({{ hypervisor.role_label }}){% endif %}</strong>
+          {% if hypervisor.network_memberships | default([]) | length > 0 %}
+            {% for membership in hypervisor.network_memberships %}
+          <div>{{ membership.label }}</div>
+            {% endfor %}
+          {% elif hypervisor.network_ips | default([]) | length > 0 %}
+          <div>{{ hypervisor.network_ips | join(' · ') }}</div>
+          {% else %}
+          <div>{{ hypervisor.detail }}</div>
+          {% endif %}
+        </div>
         {% endfor %}
+      </div>
+      {% endif %}
+      {% for network in arch_post_networks %}
+      <div class="anet {{ network.class | default('nm') }}">{{ network.label }} — {{ network.cidr }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
-        </p>
-</table>
+  {{ render_check_table(ns.core_services, "Core Services", "core") }}
+  {{ render_check_table(ns.vm_tests, "VM Instantiation Tests", "vm") }}
+  {{ render_check_table(ns.oneflow, "OneFlow Smoke Test", "oneflow") }}
+  {{ render_check_table(ns.ldap, "LDAP Authentication", "ldap") }}
+  {{ render_check_table(ns.vm_ha, "VM High Availability", "vmha") }}
+  {{ render_check_table(ns.fe_ha, "Frontend High Availability", "feha") }}
+  {{ render_check_table(ns.federation, "Federation Configuration", "federation") }}
+  {{ render_check_table(ns.other, "Other Checks", "other") }}
+
+  {% if all_federation_results is defined and all_federation_results | length > 0 %}
+  {% set ns_fed = namespace(normalized_checks={}) %}
+  {% for host, results in all_federation_results.items() %}{% for check, value in results.items() %}{% set base_check = check | regex_replace(' on [^\\s]+$', '') %}{% if base_check not in ns_fed.normalized_checks %}{% set _ = ns_fed.normalized_checks.update({base_check: {}}) %}{% endif %}{% set _ = ns_fed.normalized_checks[base_check].update({host: value}) %}{% endfor %}{% endfor %}
+  {% set fed_hosts = all_federation_results.keys() | list %}
+  <section class="data-section"><div class="section-title">Federation Detailed Results (All Zones)</div><div class="table-scroll"><table class="gtable"><thead><tr><th>Check</th>{% for host in fed_hosts %}<th>{{ host }}</th>{% endfor %}</tr></thead><tbody>{% for check, host_values in ns_fed.normalized_checks.items() %}<tr><td>{{ check }}</td>{% for host in fed_hosts %}{% set result = host_values.get(host, 'N/A') %}{% set status = status_from(result) | trim %}<td>{{ badge(status) }} {{ result }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div></section>
+  {% endif %}
+
+  {% if validation_vars.networks_verification | default(false) and network_verification_results is defined and network_verification_results | length > 0 %}
+  <section class="rst-section">
+    <button class="rst-header" type="button" onclick="toggleTable('table-networks', 'tog-networks')"><h3>Virtual Networks Validation ({{ network_verification_results | length }} networks)</h3><span class="tog" id="tog-networks">v</span></button>
+    <table class="rtable" id="table-networks"><tbody>
+    {% for network_name, results in network_verification_results.items() %}
+      {% set status = status_from(results) | trim %}
+      <tr>
+        <td class="status-cell">{{ badge(status) }}</td>
+        <td>
+          <div class="cn">{{ network_name }}</div>
+          <div class="table-scroll subblock">
+            <table class="gtable net-table">
+              <colgroup>
+                <col style="width:18%">
+                <col style="width:14%">
+                <col style="width:10%">
+                <col style="width:14%">
+                <col style="width:10%">
+                <col style="width:10%">
+                <col style="width:12%">
+                <col style="width:12%">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>test_vm_ip</th>
+                  <th>check</th>
+                  <th>destination_ip</th>
+                  <th>destination</th>
+                  <th class="num">data_bytes</th>
+                  <th class="num">tx/rx</th>
+                  <th class="num">loss %</th>
+                  <th class="num">avg_rtt_ms</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% set test_vm_ip = results.get('Test VM IP', 'N/A') %}
+                {% set gw_ping_raw = results.get('\nNetwork GW ping, packet received', results.get('Network GW ping, packet received')) %}
+                {% set ext_ping_raw = results.get('\nExternal Host ping: ', results.get('External Host ping: ', results.get('\nExternal Host ping::', results.get('External Host ping::')))) %}
+                {% set gw_ping = (gw_ping_raw | from_json) if gw_ping_raw is string and (gw_ping_raw | trim | regex_search('^\\{')) else gw_ping_raw %}
+                {% set ext_ping = (ext_ping_raw | from_json) if ext_ping_raw is string and (ext_ping_raw | trim | regex_search('^\\{')) else ext_ping_raw %}
+                {% if gw_ping is mapping %}
+                <tr>
+                  <td class="mono">{{ test_vm_ip }}</td>
+                  <td>Network GW ping</td>
+                  <td class="mono">{{ gw_ping.destination_ip | default('N/A') }}</td>
+                  <td>{{ gw_ping.destination | default('N/A') }}</td>
+                  <td class="num">{{ gw_ping.data_bytes | default('N/A') }}</td>
+                  <td class="num">{{ gw_ping.packets_transmitted | default('N/A') }}/{{ gw_ping.packets_received | default('N/A') }}</td>
+                  <td class="num">{{ gw_ping.packet_loss_percent | default('N/A') }}</td>
+                  <td class="num">{{ gw_ping.round_trip_ms_avg | default('N/A') }}</td>
+                </tr>
+                {% endif %}
+                {% if ext_ping is mapping %}
+                <tr>
+                  <td class="mono">{{ test_vm_ip }}</td>
+                  <td>External Host ping</td>
+                  <td class="mono">{{ ext_ping.destination_ip | default('N/A') }}</td>
+                  <td>{{ ext_ping.destination | default('N/A') }}</td>
+                  <td class="num">{{ ext_ping.data_bytes | default('N/A') }}</td>
+                  <td class="num">{{ ext_ping.packets_transmitted | default('N/A') }}/{{ ext_ping.packets_received | default('N/A') }}</td>
+                  <td class="num">{{ ext_ping.packet_loss_percent | default('N/A') }}</td>
+                  <td class="num">{{ ext_ping.round_trip_ms_avg | default('N/A') }}</td>
+                </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          {% if gw_ping is mapping %}{{ render_ping_detail_table('Network GW ping details', gw_ping) }}{% endif %}
+          {% if ext_ping is mapping %}{{ render_ping_detail_table('External Host ping details', ext_ping) }}{% endif %}
+          {% if '\nExternal host DNS resolvation' in results or 'External host DNS resolvation' in results %}
+          <div class="subblock">
+            <div class="cd"><strong>External host DNS resolution</strong></div>
+            <div class="table-scroll">
+              <table class="gtable net-table">
+                <thead><tr><th>test_vm_ip</th><th>dns_result</th></tr></thead>
+                <tbody><tr><td class="mono">{{ test_vm_ip }}</td><td class="mono">{{ results.get('\nExternal host DNS resolvation', results.get('External host DNS resolvation', 'N/A')) | replace('"', '') }}</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody></table>
+  </section>
+  {% endif %}
+
+  {% if validation_vars.run_storage_benchmark | default(false) and storage_benchmark is defined and storage_benchmark | length > 0 %}
+  <section class="data-section"><div class="section-title">Storage Benchmarking Results</div>
+  {% set ordered_profiles = [{'key':'rr_4k_qd1','label':'rr_4k_qd1'},{'key':'rr_4k_qd4','label':'rr_4k_qd4'},{'key':'rr_4k_qd16','label':'rr_4k_qd16'},{'key':'rr_4k_qd32','label':'rr_4k_qd32'},{'key':'rr_4k_qd64','label':'rr_4k_qd64'},{'key':'rw_4k_qd1','label':'rw_4k_qd1'},{'key':'rw_4k_qd4','label':'rw_4k_qd4'},{'key':'rw_4k_qd16','label':'rw_4k_qd16'},{'key':'rw_4k_qd32','label':'rw_4k_qd32'},{'key':'rw_4k_qd64','label':'rw_4k_qd64'},{'key':'mix_4k_70r_qd16','label':'mix_4k_70r_qd16'},{'key':'mix_64k_70r_qd16','label':'mix_64k_70r_qd16'},{'key':'seqr_128k_qd16','label':'seqr_128k_qd16'},{'key':'seqw_128k_qd16','label':'seqw_128k_qd16'},{'key':'seqr_1m_qd4','label':'seqr_1m_qd4'},{'key':'seqw_1m_qd4','label':'seqw_1m_qd4'},{'key':'syncwrite_4k_qd1','label':'syncwrite_4k_qd1'}] %}
+  {% for host in storage_benchmark.keys() | list %}<div class="section-title" style="margin-top:14px">{{ host }}</div><div class="table-scroll"><table class="gtable"><thead><tr><th>Job</th><th class="num">IOPS</th><th class="num">BW (MB/s)</th><th class="num">p99 Lat (ms)</th><th class="num">Score</th></tr></thead><tbody>
+  {% for item in ordered_profiles %}{% set p = (storage_benchmark[host].profiles | default([]) | selectattr('name','equalto',item.key) | list | first | default({})) %}{% set rw = p.rw | default('') %}{% if rw in ['read','randread'] %}{% set iops = p.read_iops | default(None) %}{% set bw_kib = p.read_bw_kib | default(None) %}{% set lat_ns = p.read_p99_ns | default(None) %}{% elif rw in ['write','randwrite'] %}{% set iops = p.write_iops | default(None) %}{% set bw_kib = p.write_bw_kib | default(None) %}{% set lat_ns = p.write_p99_ns | default(None) %}{% elif rw in ['rw','randrw'] %}{% set iops = (p.read_iops | default(0)) + (p.write_iops | default(0)) %}{% set bw_kib = (p.read_bw_kib | default(0)) + (p.write_bw_kib | default(0)) %}{% set lat_ns = [p.read_p99_ns | default(0), p.write_p99_ns | default(0)] | max %}{% else %}{% set iops = None %}{% set bw_kib = None %}{% set lat_ns = None %}{% endif %}{% set bw_mbs = (bw_kib / 1024) if bw_kib is not none else None %}{% set lat_ms = (lat_ns / 1000000) if lat_ns is not none else None %}{% if item.key[:3] == 'seq' %}{% set score = '★★★' if bw_mbs is not none and bw_mbs >= 300 else ('★★' if bw_mbs is not none and bw_mbs >= 150 else ('★' if bw_mbs is not none and bw_mbs >= 75 else '⚠')) %}{% else %}{% set score = '★★★' if lat_ms is not none and lat_ms <= 5 else ('★★' if lat_ms is not none and lat_ms <= 10 else ('★' if lat_ms is not none and lat_ms <= 20 else '⚠')) %}{% endif %}<tr><td>{{ item.label }}</td><td class="num">{{ iops | default('N/A') }}</td><td class="num">{% if bw_mbs is not none %}{{ bw_mbs | round(2) }}{% else %}N/A{% endif %}</td><td class="num">{% if lat_ms is not none %}{{ lat_ms | round(2) }}{% else %}N/A{% endif %}</td><td class="score-cell">{{ score }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endfor %}</section>
+  {% endif %}
+
+  {% if validation_vars.run_network_benchmark | default(false) and network_benchmark is defined and network_benchmark | length > 0 %}
+  <section class="data-section"><div class="section-title">Network Benchmarking Results</div><div class="section-title" style="margin-top:14px">Throughput (iperf3)</div><div class="table-scroll"><table class="gtable bench-table"><colgroup><col style="width:38%"><col style="width:38%"><col style="width:24%"></colgroup><thead><tr><th>Client host</th><th>Server</th><th class="num">Throughput</th></tr></thead><tbody>{% for host, data in network_benchmark.items() %}{% if data.iperf_results is defined and data.iperf_results.results is defined %}{% for it in data.iperf_results.results %}{% set bps = it.stdout | default('0') | float %}{% set server_name = ip_to_hostname.get(it.item) if ip_to_hostname is defined else None %}<tr><td>{{ host }}</td><td>{{ server_name | default(it.item, true) }}</td><td class="num">{{ '%.2f' | format(bps / 1000000.0) }} Mbps</td></tr>{% endfor %}{% else %}<tr><td colspan="3">No iperf3 results for {{ host }}</td></tr>{% endif %}{% endfor %}</tbody></table></div><div class="section-title" style="margin-top:18px">Ping (average RTT)</div><div class="table-scroll"><table class="gtable bench-table"><colgroup><col style="width:38%"><col style="width:38%"><col style="width:24%"></colgroup><thead><tr><th>Source host</th><th>Destination</th><th class="num">Avg RTT</th></tr></thead><tbody>{% for host, data in network_benchmark.items() %}{% if data.ping_exec is defined and data.ping_exec.results is defined %}{% for it in data.ping_exec.results %}{% set rtt_raw = it.stdout | default('') %}{% set dest_name = ip_to_hostname.get(it.item) if ip_to_hostname is defined else None %}<tr><td>{{ host }}</td><td>{{ dest_name | default(it.item, true) }}</td><td class="num">{% if rtt_raw != '' and rtt_raw != 'null' %}{{ '%.2f' | format(rtt_raw | float) }} ms{% else %}N/A{% endif %}</td></tr>{% endfor %}{% else %}<tr><td colspan="3">No ping results for {{ host }}</td></tr>{% endif %}{% endfor %}</tbody></table></div></section>
+  {% endif %}
+
+  {% if validation_vars.run_conn_matrix | default(false) and conn_results_matrix is defined and conn_results_matrix | length > 0 %}
+  {% set all_hosts = conn_results_matrix.keys() | list %}
+  <section class="data-section"><div class="section-title">Connectivity Matrix</div><div class="table-scroll"><table class="gtable"><thead><tr><th>From / To</th>{% for dst in all_hosts %}<th>{{ dst }}</th>{% endfor %}</tr></thead><tbody>{% for src in all_hosts %}<tr><td><strong>{{ src }}</strong></td>{% for dst in all_hosts %}{% if src == dst %}<td class="matrix-warn">self</td>{% else %}{% set result_element = (conn_results_matrix[src] | dict2items | selectattr('key','search',dst + '.json$') | map(attribute='value') | list) %}{% if result_element | length != 1 %}<td class="matrix-warn">missing</td>{% else %}{% set result = result_element | first %}{% if result.packet_loss_percent is defined %}<td class="{{ 'matrix-ok' if result.packet_loss_percent == 0.0 else 'matrix-bad' }}">{{ result.packet_loss_percent }}%</td>{% else %}<td class="matrix-bad">missing</td>{% endif %}{% endif %}{% endif %}{% endfor %}</tr>{% endfor %}</tbody></table></div></section>
+  {% endif %}
+
+  <section class="data-section"><div class="section-title">Variables Used For Validation</div><pre>{{ validation_vars | to_nice_yaml }}</pre></section>
+  <div class="footer"><div>OpenNebula Cloud Verification</div><div><a href="https://docs.opennebula.io/" target="_blank" rel="noopener">OpenNebula Docs</a>&nbsp;.&nbsp;<a href="https://github.com/OpenNebula/one-deploy" target="_blank" rel="noopener">one-deploy GitHub</a></div></div>
 </div>
-
-{% endif %}
-
-
-
-{% if storage_benchmark is defined and storage_benchmark | length > 0 %}
-<div class="table_component" role="region" tabindex="0">
-
-  <h2 class="western">Storage benchmarking results</h2>
-
-	{% set hosts = storage_benchmark.keys() | list %}
-
-	{% set ordered_profiles = [
-	  {'key': 'rr_4k_qd1', 'label': 'rr_4k_qd1'},
-	  {'key': 'rr_4k_qd4', 'label': 'rr_4k_qd4'},
-	  {'key': 'rr_4k_qd16', 'label': 'rr_4k_qd16'},
-	  {'key': 'rr_4k_qd32', 'label': 'rr_4k_qd32'},
-	  {'key': 'rr_4k_qd64', 'label': 'rr_4k_qd64'},
-	  {'key': 'rw_4k_qd1', 'label': 'rw_4k_qd1'},
-	  {'key': 'rw_4k_qd4', 'label': 'rw_4k_qd4'},
-	  {'key': 'rw_4k_qd16', 'label': 'rw_4k_qd16'},
-	  {'key': 'rw_4k_qd32', 'label': 'rw_4k_qd32'},
-	  {'key': 'rw_4k_qd64', 'label': 'rw_4k_qd64'},
-	  {'key': 'mix_4k_70r_qd16', 'label': 'mix_4k_70r_qd16'},
-	  {'key': 'mix_64k_70r_qd16', 'label': 'mix_64k_70r_qd16'},
-	  {'key': 'seqr_128k_qd16', 'label': 'seqr_128k_qd16'},
-	  {'key': 'seqw_128k_qd16', 'label': 'seqw_128k_qd16'},
-	  {'key': 'seqr_1m_qd4', 'label': 'seqr_1m_qd4'},
-	  {'key': 'seqw_1m_qd4', 'label': 'seqw_1m_qd4'},
-	  {'key': 'syncwrite_4k_qd1', 'label': 'syncwrite_4k_qd1'}
-	] %}
-
-	{% set aws_profile_keys = ['rr_4k_qd32', 'rw_4k_qd32', 'seqr_128k_qd16', 'seqw_128k_qd16'] %}
-
-	{% for h in hosts %}
-	  <h3 class="western">{{ h }}</h3>
-	  <table class="network_table">
-	    <tr>
-	      <th>Job</th>
-	      <th class="num">IOPS</th>
-	      <th class="num">BW (MB/s)</th>
-	      <th class="num">p99 Lat (ms)</th>
-	      <th class="num">Score</th>
-	    </tr>
-	    {% for item in ordered_profiles %}
-	      {% set p = (storage_benchmark[h].profiles | selectattr('name', 'equalto', item.key) | list | first | default({})) %}
-	      {% set rw = p.rw | default('') %}
-	      {% if rw in ['read', 'randread'] %}
-	        {% set iops = p.read_iops | default(None) %}
-	        {% set bw_kib = p.read_bw_kib | default(None) %}
-	        {% set lat_ns = p.read_p99_ns | default(None) %}
-	      {% elif rw in ['write', 'randwrite'] %}
-	        {% set iops = p.write_iops | default(None) %}
-	        {% set bw_kib = p.write_bw_kib | default(None) %}
-	        {% set lat_ns = p.write_p99_ns | default(None) %}
-	      {% elif rw in ['rw', 'randrw'] %}
-	        {% set r_iops = p.read_iops | default(None) %}
-	        {% set w_iops = p.write_iops | default(None) %}
-	        {% if r_iops is not none or w_iops is not none %}
-	          {% set iops = (r_iops | default(0)) + (w_iops | default(0)) %}
-	        {% else %}
-	          {% set iops = None %}
-	        {% endif %}
-	        {% set r_bw = p.read_bw_kib | default(None) %}
-	        {% set w_bw = p.write_bw_kib | default(None) %}
-	        {% if r_bw is not none or w_bw is not none %}
-	          {% set bw_kib = (r_bw | default(0)) + (w_bw | default(0)) %}
-	        {% else %}
-	          {% set bw_kib = None %}
-	        {% endif %}
-	        {% set r_lat = p.read_p99_ns | default(None) %}
-	        {% set w_lat = p.write_p99_ns | default(None) %}
-	        {% if r_lat is not none and w_lat is not none %}
-	          {% set lat_ns = [r_lat, w_lat] | max %}
-	        {% elif r_lat is not none %}
-	          {% set lat_ns = r_lat %}
-	        {% else %}
-	          {% set lat_ns = w_lat %}
-	        {% endif %}
-	      {% else %}
-	        {% set iops = None %}
-	        {% set bw_kib = None %}
-	        {% set lat_ns = None %}
-	      {% endif %}
-	      {% if item.key[:3] == 'seq' %}
-	        {% if bw_kib is not none %}
-	          {% set bw_mbs = (bw_kib / 1024) %}
-	        {% else %}
-	          {% set bw_mbs = None %}
-	        {% endif %}
-	        {% if bw_mbs is not none and bw_mbs >= 300 %}
-	          {% set score = '⭐⭐⭐' %}
-	        {% elif bw_mbs is not none and bw_mbs >= 150 %}
-	          {% set score = '⭐⭐' %}
-	        {% elif bw_mbs is not none and bw_mbs >= 75 %}
-	          {% set score = '⭐' %}
-	        {% else %}
-	          {% set score = '⚠️' %}
-	        {% endif %}
-	      {% else %}
-	        {% if lat_ns is not none %}
-	          {% set lat_ms = (lat_ns / 1000000) %}
-	        {% else %}
-	          {% set lat_ms = None %}
-	        {% endif %}
-	        {% if lat_ms is not none and lat_ms <= 5 %}
-	          {% set score = '⭐⭐⭐' %}
-	        {% elif lat_ms is not none and lat_ms <= 10 %}
-	          {% set score = '⭐⭐' %}
-	        {% elif lat_ms is not none and lat_ms <= 20 %}
-	          {% set score = '⭐' %}
-	        {% else %}
-	          {% set score = '⚠️' %}
-	        {% endif %}
-	      {% endif %}
-
-	      <tr>
-	        <td>{{ item.label }}</td>
-	        <td class="num {% if item.key in ['rr_4k_qd32', 'rw_4k_qd32'] %}aws_profile_cell{% endif %}">{{ iops | default('N/A') }}</td>
-	        <td class="num {% if item.key in ['seqr_128k_qd16', 'seqw_128k_qd16'] %}aws_profile_cell{% endif %}">{% if bw_kib is not none %}{{ (bw_kib / 1024) | round(2) }}{% else %}N/A{% endif %}</td>
-	        <td class="num {% if item.key in ['rr_4k_qd1', 'rw_4k_qd1'] %}aws_profile_cell{% endif %}">{% if lat_ns is not none %}{{ (lat_ns / 1000000) | round(2) }}{% else %}N/A{% endif %}</td>
-	        <td class="num">{{ score }}</td>
-	      </tr>
-	    {% endfor %}
-	  </table>
-	  <p><b>Note:</b> Highlighted values mark AWS-aligned reference profiles (4k QD32 IOPS and 128k QD16 throughput).</p>
-	  <p><b>Note:</b> The score uses p99 latency for random/mix/syncwrite and throughput for sequential profiles.</p>
-	{% endfor %}
-
-</div>
-{% endif %}
-
-{% if network_benchmark is defined and network_benchmark | length > 0 %}
-<div class="table_component" role="region" tabindex="0">
-	<h2 class="western">Network benchmarking results</h2>
-
-	<h2>Throughput (iperf3)</h2>
-		<table class="network_table">
-		<caption>Per-client to server throughput measured with iperf3</caption>
-		<tr>
-			<th>Client host</th>
-			<th>Server (ip)</th>
-			<th class="num">Throughput (Mbps)</th>
-		</tr>
-		{% for host, data in network_benchmark.items() %}
-			{% if data.iperf_results is defined and data.iperf_results.results is defined %}
-				{% for it in data.iperf_results.results %}
-					{% set bps = it.stdout | default('0') | float %}
-					{% set mbps = (bps / 1000000.0) | round(2) %}
-					<tr>
-						<td>{{ host }}</td>
-						{# try to resolve the server IP to a hostname using hostvars; fall back to the IP #}
-												{% if ip_to_hostname is defined %}
-													{% set server_name = ip_to_hostname.get(it.item) %}
-												{% else %}
-													{% set server_name = None %}
-												{% endif %}
-												<td>{{ server_name | default(it.item) }}</td>
-						<td class="num">{{ '%.2f'|format(mbps) }} Mbps</td>
-					</tr>
-				{% endfor %}
-			{% else %}
-				<tr><td colspan="3">No iperf3 results for {{ host }}</td></tr>
-			{% endif %}
-		{% endfor %}
-	</table>
-
-	<h2>Ping (average RTT)</h2>
-	<table class="network_table">
-		<caption>Average round-trip time measured with ping (jc)</caption>
-		<tr>
-			<th>Source host</th>
-			<th>Destination</th>
-			<th class="num">Avg RTT (ms)</th>
-		</tr>
-		{% for host, data in network_benchmark.items() %}
-			{% if data.ping_exec is defined and data.ping_exec.results is defined %}
-				{% for it in data.ping_exec.results %}
-					{% set rtt_raw = it.stdout | default('') %}
-					{% if rtt_raw != '' and rtt_raw != 'null' %}
-						{% set rtt = (rtt_raw | float) | round(2) %}
-						<tr>
-							<td>{{ host }}</td>
-							{# try to resolve destination IP to hostname, fall back to IP #}
-														{% if ip_to_hostname is defined %}
-															{% set dest_name = ip_to_hostname.get(it.item) %}
-														{% else %}
-															{% set dest_name = None %}
-														{% endif %}
-														<td>{{ dest_name | default(it.item) }}</td>
-							<td class="num">{{ '%.2f'|format(rtt) }} ms</td>
-						</tr>
-					{% else %}
-						<tr>
-							<td>{{ host }}</td>
-							<td>{{ it.item }}</td>
-							<td class="num">N/A</td>
-						</tr>
-					{% endif %}
-				{% endfor %}
-			{% else %}
-				<tr><td colspan="3">No ping results for {{ host }}</td></tr>
-			{% endif %}
-		{% endfor %}
-	</table>
-</div>
-{% endif %}
-
-{% if conn_results_matrix is defined and conn_results_matrix | length > 0 %}
-<div class="table_component" role="region" tabindex="0">
-	<h2 class="western">Connectivity Matrix</h2>
-
-	<table class="network_table" border="1">
-		<caption>Connectivity Matrix: Packet Loss Percentages Between VMs deployed on the hosts.</caption>
-		<thead>
-			<tr>
-				<th>From \ To</th>
-				{% set all_hosts = conn_results_matrix.keys() | list %}
-				{% for dst in all_hosts %}
-					<th>{{ dst }}</th>
-				{% endfor %}
-			</tr>
-		</thead>
-		<tbody>
-			{% for src in all_hosts %}
-				<tr>
-					<td><b>{{ src }}</b></td>
-					{% for dst in all_hosts %}
-						{% if src == dst %}
-							<td style="background:#eee">—</td>
-						{% else %}
-							{# Find the result dict for src->dst #}
-							{% set result_element = (conn_results_matrix[src] | dict2items | selectattr('key', 'search', dst + '.json$') | map(attribute='value') | list) %}
-							{% if result_element | length != 1 %}
-								<td style="background:yellow">Warning: {{ result_element | length }} results (expected 1)</td>
-							{% else %}
-								{% set result = result_element | first %}
-								{% if result.packet_loss_percent is defined %}
-									<td style="background:{{ 'lightgreen' if result.packet_loss_percent == 0.0 else 'lightcoral' }}">
-										{{ result.packet_loss_percent }}%
-									</td>
-								{% else %}
-									<td style="background:lightcoral">missing</td>
-								{% endif %}
-							{% endif %}
-						{% endif %}
-					{% endfor %}
-				</tr>
-			{% endfor %}
-		</tbody>
-	</table>
-</div>
-{% endif %}
-
-<h2 class="western">Variables used for the validation</h2>
-<pre>{{ validation_vars | to_nice_yaml }}</pre>
-
+<script>
+var PCT={{ pct }};
+window.addEventListener('load',function(){var fill=document.getElementById('pgfill');var lbl=document.getElementById('pct-lbl');if(fill&&lbl){setTimeout(function(){fill.style.width=PCT+'%';lbl.textContent=PCT+'% passing';},150);}});
+function toggleTable(tableId,toggleId){var table=document.getElementById(tableId);var toggle=document.getElementById(toggleId);if(!table||!toggle)return;if(table.style.display==='none'){table.style.display='';toggle.textContent='v';}else{table.style.display='none';toggle.textContent='>';}}
+</script>
 </body>
 </html>

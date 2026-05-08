@@ -1,5 +1,10 @@
 ---
 
+- name: Update apt cache if the system is Debian
+  ansible.builtin.apt:
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
 - name: Install ping dependencies
   ansible.builtin.package:
     name: 

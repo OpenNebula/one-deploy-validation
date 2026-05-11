@@ -1,6 +1,21 @@
 @page {
     size: A4;
     margin: 12mm;
+    @bottom-left {
+        content: "© OpenNebula Systems S. L.";
+        font-size: 9px;
+        color: #64748b;
+    }
+    @bottom-center {
+        content: counter(page);
+        font-size: 9px;
+        color: #64748b;
+    }
+    @bottom-right {
+        content: "Cloud Verification Report";
+        font-size: 9px;
+        color: #64748b;
+    }
 }
 
 body {
@@ -9,6 +24,32 @@ body {
 
 .wrap {
     padding: 8px !important;
+}
+
+.doc-page {
+    padding: 18px 22px !important;
+}
+
+.doc-topline {
+    margin-bottom: 18px !important;
+}
+
+.cover-title {
+    font-size: 28px !important;
+    margin-bottom: 20px !important;
+}
+
+.cover-abstract {
+    font-size: 11px !important;
+    line-height: 1.55 !important;
+}
+
+.cover-meta th,
+.cover-meta td,
+.summary-table th,
+.summary-table td,
+.toc-list li {
+    font-size: 11px !important;
 }
 
 .tog {

@@ -1,0 +1,12 @@
+---
+# Use with:
+#   ANSIBLE_ARGS="-e @playbooks/report_input_vars.yml.example"
+# or copy this file and pass your edited copy with:
+#   ANSIBLE_ARGS="-e @/path/to/report_input_vars.yml"
+
+prompt_report_customer: "Customer Name"
+prompt_report_document_version: "1.0"
+prompt_report_abstract: "This report describes the actions to verify the configuration and operational level of the OpenNebula cloud. As a result of this
+analysis the operational level of each component is established, if needed specific configuration updates are recommended."
+prompt_report_revision_comment: "Verification actions successful"
+prompt_report_revision_version: "1.0"

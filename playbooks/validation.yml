@@ -84,6 +84,27 @@
     report_network_verification_results: "{{ hostvars[report_frontend_host].network_verification_results | default({'No Network verification results were found': {'N/A':'N/A'}}) }}"
     date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
     validation_vars: "{{ hostvars[report_frontend_host].validation | default({}) }}"
+    report_default_abstract: >-
+      This report describes the actions to verify the configuration and operational level of the OpenNebula cloud. As a result of this analysis the operational level of each component is established, if needed specific configuration updates are recommended.
+  vars_prompt:
+    - name: prompt_report_customer
+      prompt: "Customer"
+      private: false
+    - name: prompt_report_document_version
+      prompt: "Report version"
+      private: false
+    - name: prompt_report_abstract
+      prompt: "Abstract (leave blank to use default)"
+      private: false
+      default: ""
+    - name: prompt_report_revision_comment
+      prompt: "Revision history comment (optional)"
+      private: false
+      default: ""
+    - name: prompt_report_revision_version
+      prompt: "Revision history version (leave blank to reuse report version)"
+      private: false
+      default: ""
   tasks:
     - name: Get repository version
       ansible.builtin.shell: |
@@ -271,14 +292,14 @@
         hypervisor_role_label = os.environ.get("ARCH_HYPERVISOR_ROLE_LABEL", "KVM")
 
         zone_list = run(["onezone", "list"])
-        zone_id = "0"
+        zone_ids = []
         for line in zone_list.splitlines():
-            m = re.match(r"^\*\s+(\d+)", line)
+            m = re.match(r"^\s*\*?\s*(\d+)\s+", line)
             if m:
-                zone_id = m.group(1)
-                break
+                zone_ids.append(m.group(1))
+        if not zone_ids:
+            zone_ids = ["0"]
 
-        zone_xml = run(["onezone", "show", "--xml", zone_id])
         host_pool_xml = run(["onehost", "list", "--xml"])
         vnet_pool_xml = run(["onevnet", "list", "--xml"])
         vm_pool_xml = run(["onevm", "list", "--xml"])
@@ -319,18 +340,25 @@
 
         frontends = []
         seen_fe = set()
-        if zone_xml:
+        for zone_id in zone_ids:
+            zone_xml = run(["onezone", "show", "--xml", zone_id])
+            if not zone_xml:
+                continue
             try:
                 root = ET.fromstring(zone_xml)
             except Exception:
                 root = None
-            if root is not None:
-                zone_name = root.findtext("NAME") or "OpenNebula"
-                zone_endpoint = root.findtext("./TEMPLATE/ENDPOINT") or ""
-                if zone_endpoint:
-                    host = endpoint_host(zone_endpoint) or "localhost"
-                    if host in {"localhost", "127.0.0.1"}:
-                        host = socket.getfqdn() or host
+            if root is None:
+                continue
+
+            zone_name = root.findtext("NAME") or f"Zone {zone_id}"
+            zone_endpoint = root.findtext("./TEMPLATE/ENDPOINT") or ""
+            if zone_endpoint:
+                host = endpoint_host(zone_endpoint) or "localhost"
+                if host in {"localhost", "127.0.0.1"}:
+                    host = socket.getfqdn() or host
+                endpoint_key = (zone_id, zone_endpoint)
+                if endpoint_key not in seen_fe:
                     matched = find_match(zone_name, host, frontend_inventory)
                     if matched is None and len(frontend_inventory) == 1:
                         matched = frontend_inventory[0]
@@ -341,26 +369,34 @@
                         "network_ips": overrides.get("network_ips", []),
                         "detail": overrides.get("detail") or pretty_detail(zone_name, host),
                         "endpoint": zone_endpoint,
+                        "zone_id": zone_id,
+                        "zone_name": zone_name,
                     })
-                    seen_fe.add((zone_name, zone_endpoint))
+                    seen_fe.add(endpoint_key)
 
-                for server in root.findall("./SERVER_POOL/SERVER"):
-                    server_name = server.findtext("NAME") or server.findtext("SERVER_NAME") or "Frontend Server"
-                    server_endpoint = server.findtext("ENDPOINT") or server.findtext("RPC") or server.findtext("SERVER_RPC") or ""
-                    if not server_endpoint or (server_name, server_endpoint) in seen_fe:
-                        continue
-                    host = endpoint_host(server_endpoint) or server_name
-                    if host in {"localhost", "127.0.0.1"}:
-                        host = socket.getfqdn() or host
-                    matched = find_match(server_name, host, frontend_inventory)
-                    overrides = matched.get("overrides", {}) if matched else {}
-                    frontends.append({
-                        "label": display_label(matched, overrides, server_name),
-                        "role_label": overrides.get("role_label", frontend_role_label),
-                        "network_ips": overrides.get("network_ips", []),
-                        "detail": overrides.get("detail") or pretty_detail(server_name, host),
-                        "endpoint": server_endpoint,
-                    })
+            for server in root.findall("./SERVER_POOL/SERVER"):
+                server_name = server.findtext("NAME") or server.findtext("SERVER_NAME") or "Frontend Server"
+                server_endpoint = server.findtext("ENDPOINT") or server.findtext("RPC") or server.findtext("SERVER_RPC") or ""
+                if not server_endpoint:
+                    continue
+                endpoint_key = (zone_id, server_endpoint)
+                if endpoint_key in seen_fe:
+                    continue
+                host = endpoint_host(server_endpoint) or server_name
+                if host in {"localhost", "127.0.0.1"}:
+                    host = socket.getfqdn() or host
+                matched = find_match(server_name, host, frontend_inventory)
+                overrides = matched.get("overrides", {}) if matched else {}
+                frontends.append({
+                    "label": display_label(matched, overrides, server_name),
+                    "role_label": overrides.get("role_label", frontend_role_label),
+                    "network_ips": overrides.get("network_ips", []),
+                    "detail": overrides.get("detail") or pretty_detail(server_name, host),
+                    "endpoint": server_endpoint,
+                    "zone_id": zone_id,
+                    "zone_name": zone_name,
+                })
+                seen_fe.add(endpoint_key)
 
         if not frontends:
             host = socket.getfqdn() or "localhost"
@@ -470,6 +506,10 @@
             "frontends": frontends,
             "hypervisors": hypervisors,
             "networks": networks,
+            "zone_count": len(zone_ids),
+            "frontend_count": len(frontends),
+            "hypervisor_count": len(hypervisors),
+            "network_count": len(networks),
         }))
         PY
       args:
@@ -497,10 +537,17 @@
       vars:
         repo_version: "{{ repo_version_cmd.stdout }}"
         date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
+        report_date_only: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
         verification_result: "{{ report_verification_result }}"
         verification_comments: "{{ report_verification_comments }}"
         network_verification_results: "{{ report_network_verification_results }}"
         template_report_architecture: "{{ discovered_report_architecture | default({}) }}"
+        template_report_customer: "{{ prompt_report_customer }}"
+        template_report_document_version: "{{ prompt_report_document_version }}"
+        template_report_abstract: "{{ prompt_report_abstract }}"
+        template_report_default_abstract: "{{ report_default_abstract }}"
+        template_report_revision_comment: "{{ prompt_report_revision_comment }}"
+        template_report_revision_version: "{{ prompt_report_revision_version }}"
 
     - name: Render PDF print stylesheet
       ansible.builtin.template:

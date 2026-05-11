@@ -80,7 +80,7 @@ validation:
   # OUTPUT: 
   #    - HTML document at /tmp/conn-matrix-report.html
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
-  run_conn_matrix: true
+  run_conn_matrix: false
   conn_matrix:
     bridge_name: br0
     ping_count: 10

@@ -14,7 +14,6 @@ The following packages must be installed on the host:
 - `python3-pip`
 - `python3-venv`
 - `make`
-- `weasyprint`
 
 ## Environment Setup
 
@@ -26,7 +25,7 @@ The following packages must be installed on the host:
 ```
 3. Install required tools inside the virtual environment:
 ```shell
-   python -m pip install hatch uv
+   python -m pip install hatch uv weasyprint
 ```
 4. Install Ansible collections:
 ```shell

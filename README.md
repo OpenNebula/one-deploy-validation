@@ -47,10 +47,12 @@ The available test cases are briefly documented together with their key configur
 2. Customize the configuration of the validation testcases by setting the enabler flags (`validation.run_*` booleans) in [all.yml](./inventory/reference/group_vars/all.yml). This file contains the recommended configuration that should be tested on most deployments. Always intend to enable all testcases that are relevant for the deployment (for example, if VM HA or FE HA are configured, enable those testcases as well). 
 If any testcase is disabled compared to the current [all.yml](./inventory/reference/group_vars/all.yml), please provide justification in addition to the generated HTML reports.
 
-3. To execute `ansible-playbook` you can run
+3. Fill in the report details such as customer name, version, abstract etc.. in ./playbooks/report_input_vars.yml.example. Make a copy and reference that copy during the execution step.
+
+4. To execute `ansible-playbook` using the example template you can run
 
    ```shell
-   make I=inventory/reference/example.yml validation
+   make I=inventory/reference/example.yml validation ANSIBLE_ARGS="-e @playbooks/report_input_vars.yml.example
    ```
 Ensure that your Python virtual environment is activated before running the playbook.
 

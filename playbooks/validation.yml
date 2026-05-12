@@ -353,28 +353,9 @@
 
             zone_name = root.findtext("NAME") or f"Zone {zone_id}"
             zone_endpoint = root.findtext("./TEMPLATE/ENDPOINT") or ""
-            if zone_endpoint:
-                host = endpoint_host(zone_endpoint) or "localhost"
-                if host in {"localhost", "127.0.0.1"}:
-                    host = socket.getfqdn() or host
-                endpoint_key = (zone_id, zone_endpoint)
-                if endpoint_key not in seen_fe:
-                    matched = find_match(zone_name, host, frontend_inventory)
-                    if matched is None and len(frontend_inventory) == 1:
-                        matched = frontend_inventory[0]
-                    overrides = matched.get("overrides", {}) if matched else {}
-                    frontends.append({
-                        "label": display_label(matched, overrides, zone_name),
-                        "role_label": overrides.get("role_label", frontend_role_label),
-                        "network_ips": overrides.get("network_ips", []),
-                        "detail": overrides.get("detail") or pretty_detail(zone_name, host),
-                        "endpoint": zone_endpoint,
-                        "zone_id": zone_id,
-                        "zone_name": zone_name,
-                    })
-                    seen_fe.add(endpoint_key)
+            zone_servers = root.findall("./SERVER_POOL/SERVER")
 
-            for server in root.findall("./SERVER_POOL/SERVER"):
+            for server in zone_servers:
                 server_name = server.findtext("NAME") or server.findtext("SERVER_NAME") or "Frontend Server"
                 server_endpoint = server.findtext("ENDPOINT") or server.findtext("RPC") or server.findtext("SERVER_RPC") or ""
                 if not server_endpoint:
@@ -397,6 +378,27 @@
                     "zone_name": zone_name,
                 })
                 seen_fe.add(endpoint_key)
+
+            if not zone_servers and zone_endpoint:
+                host = endpoint_host(zone_endpoint) or "localhost"
+                if host in {"localhost", "127.0.0.1"}:
+                    host = socket.getfqdn() or host
+                endpoint_key = (zone_id, zone_endpoint)
+                if endpoint_key not in seen_fe:
+                    matched = find_match(zone_name, host, frontend_inventory)
+                    if matched is None and len(frontend_inventory) == 1:
+                        matched = frontend_inventory[0]
+                    overrides = matched.get("overrides", {}) if matched else {}
+                    frontends.append({
+                        "label": display_label(matched, overrides, zone_name),
+                        "role_label": overrides.get("role_label", frontend_role_label),
+                        "network_ips": overrides.get("network_ips", []),
+                        "detail": overrides.get("detail") or pretty_detail(zone_name, host),
+                        "endpoint": zone_endpoint,
+                        "zone_id": zone_id,
+                        "zone_name": zone_name,
+                    })
+                    seen_fe.add(endpoint_key)
 
         if not frontends:
             host = socket.getfqdn() or "localhost"

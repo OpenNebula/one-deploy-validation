@@ -100,13 +100,23 @@ body {
 }
 
 .cards {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    align-items: stretch !important;
     margin-bottom: 8px !important;
     gap: 8px !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
 }
 
 .card {
+    display: flex !important;
+    width: auto !important;
+    max-width: none !important;
     min-height: 52px !important;
     padding: 8px 6px !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
 }
 
 .card .num {

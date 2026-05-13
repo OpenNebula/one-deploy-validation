@@ -34,5 +34,4 @@ endif
 
 validation: $(ENV_ONE_DEPLOY_VALIDATION)
 	cd $(SELF)/ && \
-	$(call ENV_RUN,validation-default) ansible-playbook $(_VERBOSE) -i $(INVENTORY) $(_TAGS) $(_SKIP_TAGS) $(SELF)/playbooks/validation.yml
-
+	$(call ENV_RUN,validation-default) ansible-playbook $(_VERBOSE) -i $(INVENTORY) $(_TAGS) $(_SKIP_TAGS) $(ANSIBLE_ARGS) $(SELF)/playbooks/validation.yml

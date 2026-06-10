@@ -1,7 +1,8 @@
 ---
-- name: Set host_id and ssh_public_key for this iteration
+- name: Set host_id, cluster and ssh_public_key for this iteration
   ansible.builtin.set_fact:
     host_id: "{{ item.split(',')[0] }}"
+    current_cluster: "{{ _host_id_to_cluster[item.split(',')[0]] }}"
     ssh_public_key: >-
       {{
         hostvars[ groups[ frontend_group | d('frontend') ][0] ]
@@ -40,9 +41,9 @@
     argv:
       - onetemplate
       - instantiate
-      - "{{ validation.conn_matrix.market_name }}"
+      - "{{ validation.conn_matrix.market_name }}{{ current_cluster.name_suffix }}"
       - --nic
-      - "{{ _conn_matrix_vnet_name }}"
+      - "{{ current_cluster.conn_matrix_vnet_name }}"
       - --name
       - "conn-mtx-vm-on-host-{{ host_id }}"
       - --raw

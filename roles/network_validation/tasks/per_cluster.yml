@@ -1,0 +1,25 @@
+---
+- name: "Network validation for cluster '{{ current_cluster.name }}'"
+  block:
+    - name: "Validate the networks of cluster '{{ current_cluster.name }}'"
+      ansible.builtin.include_tasks:
+        file: cluster_networks.yml
+  rescue:
+    - name: Best-effort cleanup of leaked network-test VMs
+      ansible.builtin.shell: >
+        onevm terminate --hard '{{ item.stdout.split(":")[1] | trim }}'
+      loop: "{{ (vms | d({})).results | d([]) }}"
+      when: "':' in (item.stdout | d('') | string)"
+      failed_when: false
+      run_once: true
+
+    - name: "Record network validation failure for cluster '{{ current_cluster.name }}'"
+      ansible.builtin.set_fact:
+        network_verification_results: >-
+          {{ (network_verification_results | default({}))
+             | combine({(current_cluster.name ~ '/validation'): {'Result': 'failed'}}) }}
+      run_once: true
+
+    - name: "Show failure"
+      ansible.builtin.debug:
+        msg: "Network validation failed in cluster '{{ current_cluster.name }}', continuing with the next cluster."

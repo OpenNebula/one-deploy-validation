@@ -1,0 +1,77 @@
+---
+# Exports a marketplace app to a given image datastore under a given name.
+# Idempotent: a pre-existing image with the target name is reused.
+#
+# Inputs (set via include vars):
+#   _export_app_name - marketplace app name (e.g. 'Alpine Linux 3.21')
+#   _export_name     - target image/template name (may carry a cluster suffix)
+#   _export_ds_id    - image datastore ID to export into
+# Facts produced:
+#   _export_template_id - VM template ID (string)
+#   _export_image_id    - disk image ID (string)
+
+- name: Initialize export facts
+  ansible.builtin.set_fact:
+    _export_template_id: ""
+    _export_image_id: ""
+
+- name: "Export '{{ _export_app_name }}' as '{{ _export_name }}' to datastore {{ _export_ds_id }}"
+  ansible.builtin.shell: |
+    onemarketapp export $(onemarketapp list -f NAME='{{ _export_app_name }}' -l ID --no-header) -d {{ _export_ds_id }} '{{ _export_name }}'
+  register: _export_cmd
+  failed_when: "_export_cmd.rc != 0 and (_export_cmd.rc != 255 or 'NAME is already taken by IMAGE' not in _export_cmd.stderr)"
+  become: true
+  become_user: oneadmin
+  changed_when: _export_cmd.rc == 0
+
+- name: Get newly exported template ID
+  ansible.builtin.shell: >
+    echo '{{ _export_cmd.stdout }}' | grep -A1 VMTEMPLATE | grep ID | awk '{print $2}'
+  register: _export_new_id
+  failed_when: _export_new_id.rc != 0
+  changed_when: false
+  become: true
+  become_user: oneadmin
+  when: _export_cmd.rc == 0
+
+- name: Get existing template ID
+  ansible.builtin.shell: >
+    onetemplate list --csv -f NAME='{{ _export_name }}' -l ID --no-header
+  register: _export_existing_id
+  failed_when: _export_existing_id.rc != 0
+  changed_when: false
+  become: true
+  become_user: oneadmin
+  when: _export_cmd.rc == 255
+
+- name: Set exported template ID
+  ansible.builtin.set_fact:
+    _export_template_id: >-
+      {{ (_export_new_id.stdout if not (_export_new_id.skipped | d(false))
+          else _export_existing_id.stdout) | trim }}
+
+# rc=255 only proves an IMAGE with this name exists; the matching template may
+# be missing or duplicated across owners, and the reused image may live in a
+# different datastore than _export_ds_id (we assume per-cluster names prevent
+# that).
+- name: Assert a single matching template was found
+  ansible.builtin.assert:
+    that: _export_template_id is match('^[0-9]+$')
+    fail_msg: >-
+      Could not resolve a unique VM template named '{{ _export_name }}'
+      (got '{{ _export_template_id }}'). An image with this name exists but
+      its template is missing or ambiguous; delete the leftover image or
+      rename it.
+
+- name: Get exported template as JSON
+  ansible.builtin.shell: >
+    onetemplate show {{ _export_template_id }} -j
+  register: _export_tpl_json
+  failed_when: "_export_tpl_json.rc != 0 and _export_tpl_json.stdout != ''"
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+- name: Set exported image ID
+  ansible.builtin.set_fact:
+    _export_image_id: "{{ _export_tpl_json.stdout | from_json | json_query('VMTEMPLATE.TEMPLATE.DISK.IMAGE_ID') }}"

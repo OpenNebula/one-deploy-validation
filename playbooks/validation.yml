@@ -521,6 +521,9 @@
         ARCH_HYPERVISORS_JSON: "{{ report_arch_hypervisor_inventory | default([]) | to_json }}"
         ARCH_FRONTEND_ROLE_LABEL: "{{ (validation_vars.architecture | default({})).frontend_role_label | default('OpenNebula FE VM') }}"
         ARCH_HYPERVISOR_ROLE_LABEL: "{{ (validation_vars.architecture | default({})).hypervisor_role_label | default('KVM') }}"
+      # The OpenNebula CLI only exists on the frontend; running this on the
+      # Ansible controller yields an empty architecture section.
+      delegate_to: "{{ report_frontend_host }}"
       register: report_architecture_cmd
       changed_when: false
       failed_when: false

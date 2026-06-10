@@ -1,31 +1,35 @@
 ---
 # Only execute these steps on a single frontend host AND when VM HA validation is enabled
-- name: Download test VM template and image from the Marketplace
-  ansible.builtin.shell: |
-    onemarketapp export $(onemarketapp list -f NAME='{{ _test_vm_ha_name }}' -l ID --no-header) -d $(onedatastore list -f TYPE=img -l ID --no-header | head -n 1) '{{_test_vm_ha_name}}'
-  register: vm_download
-  failed_when: "vm_download.rc != 0 and (vm_download.rc != 255 or 'NAME is already taken by IMAGE' not in vm_download.stderr)"
+- name: Export the HA test VM template from the marketplace for this cluster
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: export_marketapp.yml
+  vars:
+    _export_app_name: "{{ _test_vm_ha_name }}"
+    _export_name: "{{ _test_vm_ha_name }}{{ current_cluster.name_suffix }}"
+    _export_ds_id: "{{ current_cluster.image_ds_id }}"
 
 - name: Verify VM Download from Marketplace
   set_fact:
-    verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' : 'ok' }) }}"
+    verification_result: "{{ (verification_result | default({})) | combine({'VM HA: download a test VM template from the marketplace' ~ current_cluster.report_suffix : 'ok' }) }}"
 
 - name: "Check if VM already exists"
-  ansible.builtin.command: onevm list -l ID --csv --filter NAME=test_vm_ha --no-header
+  ansible.builtin.command: onevm list -l ID --csv --filter NAME=test_vm_ha{{ current_cluster.name_suffix }} --no-header
   register: existing_vm
   changed_when: false
 
+# The HA VM has no NIC, so anchor it to the cluster explicitly.
 - name: Instantiate test VM
   ansible.builtin.shell: >
-    onetemplate instantiate "{{ _test_vm_ha_name }}" --name "test_vm_ha"
+    onetemplate instantiate "{{ _test_vm_ha_name }}{{ current_cluster.name_suffix }}" --name "test_vm_ha{{ current_cluster.name_suffix }}"
+    --raw 'SCHED_REQUIREMENTS="CLUSTER_ID = {{ current_cluster.id }}"'
   register: test_vm_ha
-  failed_when: "test_vm_ha.rc != 0" 
+  failed_when: "test_vm_ha.rc != 0"
   when: existing_vm.stdout == ""
 
 - name: Save VM id for cleanup
   set_fact:
-    test_vm_ha_id: "{{ test_vm_ha.stdout.split(':')[1] | trim }}"
-  when: existing_vm.stdout == ""
+    test_vm_ha_id: "{{ (existing_vm.stdout | trim) if existing_vm.stdout != '' else (test_vm_ha.stdout.split(':')[1] | trim) }}"
 
 - name: Wait for VM to be in running state
   ansible.builtin.shell: >
@@ -35,7 +39,6 @@
   until: vm_state.stdout == "runn"
   retries: 10
   delay: 10
-  when: existing_vm.stdout == ""
 
 - name: Fetch VM information in JSON format
   ansible.builtin.shell: >

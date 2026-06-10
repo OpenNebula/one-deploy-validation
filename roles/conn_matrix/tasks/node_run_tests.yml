@@ -11,9 +11,14 @@
     host_name_to_vm_ip: "{{ hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_vm_ip'] }}"
   when: hostvars[groups[frontend_group | d('frontend')][0]]['host_name_to_vm_ip'] is defined
 
+- name: Fetch hostname-to-cluster mapping from the first frontend node
+  set_fact:
+    hostname_to_cluster_name: "{{ hostvars[groups[frontend_group | d('frontend')][0]]['hostname_to_cluster_name'] | d({}) }}"
+
 - name: Add VM IP+offset/32 to {{ _conn_matrix_bridge_name }} and route for each VM IP
   vars:
     _mapping_length: "{{ host_name_to_vm_ip | length }}"
+  when: hostname_cmd in (host_name_to_vm_ip | d({}))
   register: add_vm_ip_route
   failed_when: "('Address already assigned' not in add_vm_ip_route.stderr or add_vm_ip_route.rc != 2) \
                 and add_vm_ip_route.rc != 0\
@@ -36,7 +41,10 @@
   loop: "{{ host_name_to_vm_ip | dict2items }}"
   loop_control:
     loop_var: other_vm
-  when: other_vm.value != _my_vm_ip
+  when:
+    - hostname_cmd in (host_name_to_vm_ip | d({}))
+    - other_vm.value != _my_vm_ip
+    - (hostname_to_cluster_name | d({})).get(other_vm.key, '') == (hostname_to_cluster_name | d({})).get(hostname_cmd, '')
   ansible.builtin.shell: |
     ssh -i ~/.ssh/conn-matrix -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{{ _my_vm_ip }} -- \
       ping -c {{ _conn_matrix_ping_count }} {{ other_vm.value }} | jc --ping > /tmp/conn-matrix-results/{{ inventory_hostname }}/{{ _other_hostname }}.json
@@ -54,13 +62,17 @@
   loop: "{{ host_name_to_vm_ip | dict2items }}"
   loop_control:
     loop_var: other_vm
-  when: other_vm.value != _my_vm_ip
+  when:
+    - hostname_cmd in (host_name_to_vm_ip | d({}))
+    - other_vm.value != _my_vm_ip
+    - (hostname_to_cluster_name | d({})).get(other_vm.key, '') == (hostname_to_cluster_name | d({})).get(hostname_cmd, '')
   register: slurped_files
   no_log: true
 
 - name: Build a dictionary of file contents
+  when: hostname_cmd in (host_name_to_vm_ip | d({}))
   set_fact:
-    conn_results_vector: >- 
+    conn_results_vector: >-
       {{ dict(
           slurped_files.results | selectattr('source', 'defined') | map(attribute='source') | 
           zip(slurped_files.results | selectattr('source', 'defined') | map(attribute='content') | map('b64decode') | map('from_json'))

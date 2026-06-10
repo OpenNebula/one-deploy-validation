@@ -56,6 +56,21 @@ If any testcase is disabled compared to the current [all.yml](./inventory/refere
    ```
 Ensure that your Python virtual environment is activated before running the playbook.
 
+## Multi-cluster deployments
+
+The validation is cluster aware. Every OpenNebula cluster that has at least
+one host is validated in a single run: tests that create VMs (test VM,
+connectivity matrix, network validation, storage benchmark, VM HA, OneFlow)
+run once per cluster and only use that cluster's hosts, datastores and
+virtual networks. Marketplace images are exported once per cluster (suffixed
+with the cluster name when more than one cluster is validated) and report
+entries are suffixed with ` — cluster <name>`.
+
+Optional inventory settings (`validation.clusters`,
+`validation.cluster_overrides`) restrict the cluster list or pin a specific
+vnet/image datastore per cluster — see
+`inventory/reference/group_vars/all.yml`.
+
 ## Validation Results
 
 The execution of the all the tests produces the following output files on the Ansible controller (e.g. laptop):

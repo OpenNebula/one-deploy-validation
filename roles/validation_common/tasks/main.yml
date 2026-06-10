@@ -6,3 +6,10 @@
 - name: Set fact with hostname
   set_fact:
     hostname_cmd: "{{ hostname_cmd.stdout }}"
+
+- name: Discover OpenNebula clusters
+  ansible.builtin.include_tasks:
+    file: cluster_discovery.yml
+  when:
+    - (groups[frontend_group | d('frontend')] | d([])) | length > 0
+    - hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host

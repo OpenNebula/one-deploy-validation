@@ -6,19 +6,22 @@
   become_user: oneadmin
   register: exec_onevnet_list_json
 
+# A pool with a single vnet arrives as a mapping instead of a list.
 - name: Set full resource facts
   ansible.builtin.set_fact:
-    vnet_names: "{{ exec_onevnet_list_json.stdout | from_json | ansible.builtin.json_query(_q_vnet_names) }}"
+    vnet_names: "{{ ([_vp] if _vp is mapping else (_vp or [])) | map(attribute='NAME') | list }}"
   vars:
-    _q_vnet_names: 'VNET_POOL.VNET[*].NAME'
+    _vp: "{{ (exec_onevnet_list_json.stdout | from_json).VNET_POOL.VNET | d([]) }}"
 
 - name: Create vnet
   when: validation.test_vm.create_vnet
+  vars:
+    _cluster_vnet_name: "{{ validation.test_vm.vnet_name }}{{ current_cluster.name_suffix }}"
   block:
     - name: Render vnet config
       template:
         src: test_vnet.j2
-        dest: /var/tmp/vnet_{{ validation.test_vm.vnet_name }}.template
+        dest: /var/tmp/vnet_{{ _cluster_vnet_name }}.template
 
     - name: Verify connection to the VNET default gateway
       ansible.builtin.shell: >
@@ -31,23 +34,48 @@
 
     - name: Update network
       ansible.builtin.shell: >
-        cat /var/tmp/vnet_{{ validation.test_vm.vnet_name }}.template | onevnet update {{ validation.test_vm.vnet_name }}
+        cat /var/tmp/vnet_{{ _cluster_vnet_name }}.template | onevnet update {{ _cluster_vnet_name }}
       register: test_network
       failed_when: "test_network.rc != 0"
-      when: validation.test_vm.vnet_name in vnet_names
+      become: true
+      become_user: oneadmin
+      when: _cluster_vnet_name in vnet_names
 
     - name: Create network
       ansible.builtin.shell: >
-        onevnet create /var/tmp/vnet_{{ validation.test_vm.vnet_name }}.template
+        onevnet create /var/tmp/vnet_{{ _cluster_vnet_name }}.template
       register: test_network
       failed_when: "test_network.rc != 0"
-      when: validation.test_vm.vnet_name not in vnet_names
-    
+      become: true
+      become_user: oneadmin
+      when: _cluster_vnet_name not in vnet_names
+
+    - name: Assign the test network to the cluster
+      ansible.builtin.shell: >
+        onecluster addvnet {{ current_cluster.id }} '{{ _cluster_vnet_name }}'
+      register: addvnet_result
+      # Re-runs find the vnet already in the cluster; tolerate that.
+      failed_when: addvnet_result.rc != 0 and 'already' not in (addvnet_result.stderr | lower)
+      become: true
+      become_user: oneadmin
+      when: current_cluster.id != '0'
+
+    # New vnets land in the default cluster; remove them from it so the
+    # scheduler only matches hosts of the target cluster.
+    - name: Remove the test network from the default cluster
+      ansible.builtin.shell: >
+        onecluster delvnet 0 '{{ _cluster_vnet_name }}'
+      register: delvnet_result
+      failed_when: false
+      become: true
+      become_user: oneadmin
+      when: current_cluster.id != '0'
+
     - name: Delete vnet definition
       file:
-        path: /var/tmp/vnet_{{ validation.test_vm.vnet_name }}.template
+        path: /var/tmp/vnet_{{ _cluster_vnet_name }}.template
         state: absent
 
     - name: Verify test network creation
       set_fact:
-        verification_result: "{{ (verification_result | default({})) | combine({'Test network creation' : 'ok'}) }}"
+        verification_result: "{{ (verification_result | default({})) | combine({'Test network creation' ~ current_cluster.report_suffix : 'ok'}) }}"

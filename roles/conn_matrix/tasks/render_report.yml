@@ -4,9 +4,9 @@
     conn_results_matrix: >-
       {{
       dict(
-        groups[node_group | d('node')] | map('extract', hostvars, 'inventory_hostname') | 
+        groups[node_group | d('node')] | map('extract', hostvars, 'inventory_hostname') |
         zip(
-          groups[node_group | d('node')] | map('extract', hostvars, 'conn_results_vector')
+          groups[node_group | d('node')] | map('extract', hostvars, 'conn_results_vector') | map('d', {})
         )
       )
       }}

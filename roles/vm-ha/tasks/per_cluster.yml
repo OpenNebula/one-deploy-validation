@@ -1,0 +1,55 @@
+---
+- name: "VM HA validation for cluster '{{ current_cluster.name }}'"
+  block:
+    # Each cluster iteration must resolve its own target node and VM.
+    - name: Reset target node and VM facts for this cluster
+      ansible.builtin.set_fact:
+        target_node_for_error: ""
+        test_vm_ha_id: ""
+        host_name: ""
+        host_id: ""
+
+    - name: Setup VM for HA test
+      ansible.builtin.include_tasks: setup_vm.yml
+
+    - name: Find the node to produce error on
+      ansible.builtin.set_fact:
+        target_node_for_error: "{{ item }}"
+      loop: "{{ groups[node_group | d('node')] }}"
+      when:
+        - hostvars[item]['hostname_cmd'] == hostvars[inventory_hostname]['host_name_to_hostname_cmd'][host_name_to_produce_error]
+
+    - name: Fail if target node not found
+      ansible.builtin.fail:
+        msg: "Could not find ansible host corresponding to OpenNebula host {{ host_name_to_produce_error }}"
+      when: target_node_for_error == ""
+
+    - name: Execute Fault Injection
+      ansible.builtin.include_tasks: fault_injection.yml
+      vars:
+        _produce_error_method: "{{ validation.vm_ha.produce_error_method | d('if_down') }}"
+      args:
+        apply:
+          delegate_to: "{{ target_node_for_error }}"
+
+    - name: Verify VM HA
+      ansible.builtin.include_tasks: verify.yml
+      vars:
+        _fencing_check_retries: "{{ validation.vm_ha.fencing_check_retries | default(8) }}"
+        _fencing_check_delay: "{{ validation.vm_ha.fencing_check_delay | default(60) }}"
+  rescue:
+    - name: Best-effort cleanup of a leaked HA test VM
+      ansible.builtin.shell: >
+        onevm terminate --hard {{ test_vm_ha_id }}
+      failed_when: false
+      when: (test_vm_ha_id | d('')) | string | length > 0
+
+    - name: "Record VM HA failure for cluster '{{ current_cluster.name }}'"
+      ansible.builtin.set_fact:
+        verification_result: >-
+          {{ (verification_result | d({}))
+             | combine({'VM HA validation' ~ current_cluster.report_suffix: 'failed'}) }}
+
+    - name: "Show failure"
+      ansible.builtin.debug:
+        msg: "VM HA validation failed in cluster '{{ current_cluster.name }}', continuing with the next cluster."

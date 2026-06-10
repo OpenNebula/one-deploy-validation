@@ -4,19 +4,21 @@
   block:
   - name: Get VM template as JSON
     ansible.builtin.shell: >
-      onetemplate show "{{ validation.test_vm.vm.market_name }}" -j
+      onetemplate show "{{ validation.test_vm.vm.market_name }}{{ current_cluster.name_suffix }}" -j
     register: image_output
     failed_when: "image_output.rc != 0 and image_output.stdout == ''"
-    when: test_vm_template_image_id is not defined
+    when: current_cluster.name not in _test_vm_template_image_ids_map
 
-  - name: Set `test_vm_template_image_id` from template JSON
+  - name: Set benchmark image ID for this cluster
     ansible.builtin.set_fact:
-      test_vm_template_image_id: "{{ image_output.stdout | from_json | json_query('VMTEMPLATE.TEMPLATE.DISK.IMAGE_ID') }}"
-    when: image_output is defined and (test_vm_template_image_id is not defined)
+      _sb_image_id: >-
+        {{ _test_vm_template_image_ids_map[current_cluster.name]
+           if current_cluster.name in _test_vm_template_image_ids_map
+           else (image_output.stdout | from_json | json_query('VMTEMPLATE.TEMPLATE.DISK.IMAGE_ID')) }}
 
   - name: Instantiate benchmark VM
     ansible.builtin.shell: >
-      onetemplate instantiate "{{ validation.test_vm.vm.market_name }}" --nic '{{ validation.storage_benchmark.vnet_name }}' --disk {{ test_vm_template_image_id }}:size=8000 --mem 1g
+      onetemplate instantiate "{{ validation.test_vm.vm.market_name }}{{ current_cluster.name_suffix }}" --nic '{{ current_cluster.storage_vnet_name }}' --disk {{ _sb_image_id }}:size=8000 --mem 1g
     register: benchmarkvm_id
     failed_when: "benchmarkvm_id.rc != 0"
     retries: 3
@@ -29,7 +31,7 @@
     failed_when: "benchmarkvm_state.rc != 0"
     until: benchmarkvm_state.stdout == "runn"
     retries: 10
-    delay: 10
+    delay: 20
 
   - name: Get Benchmark VM IP
     ansible.builtin.shell: >
@@ -43,7 +45,7 @@
     register: ssh_conn_result
     until: ssh_conn_result.rc == 0
     retries: 10
-    delay: 10
+    delay: 20
 
   - name: Run Storage benchmark suite
     become: true
@@ -200,7 +202,7 @@
       storage_benchmark: >-
         {{
           storage_benchmark | default({}) | combine({
-            inventory_hostname: {
+            (inventory_hostname ~ current_cluster.report_suffix): {
               'fio_raw': (fio_suite.stdout | from_json),
               'profiles': (fio_suite.stdout | from_json | json_query('jobs[].{name: jobname, rw: "job options".rw, bs: "job options".bs, iodepth: "job options".iodepth, read_iops: read.iops, read_bw_kib: read.bw, read_p99_ns: read.clat_ns.percentile."99.000000", write_iops: write.iops, write_bw_kib: write.bw, write_p99_ns: write.clat_ns.percentile."99.000000" }') )
             }
@@ -214,3 +216,22 @@
     failed_when: "cleanup_result.rc != 0"
 
   when: validation.run_storage_benchmark | d(true)
+  rescue:
+    - name: Best-effort cleanup of a leaked benchmark VM
+      ansible.builtin.shell: >
+        onevm terminate --hard {{ benchmarkvm_id.stdout.split(':')[1] | trim }}
+      failed_when: false
+      when:
+        - benchmarkvm_id is defined
+        - benchmarkvm_id.stdout is defined
+        - "':' in (benchmarkvm_id.stdout | string)"
+
+    - name: "Record storage benchmark failure for cluster '{{ current_cluster.name }}'"
+      ansible.builtin.set_fact:
+        verification_result: >-
+          {{ (verification_result | d({}))
+             | combine({'Storage benchmark' ~ current_cluster.report_suffix: 'failed'}) }}
+
+    - name: "Show failure"
+      ansible.builtin.debug:
+        msg: "Storage benchmark failed in cluster '{{ current_cluster.name }}', continuing with the next cluster."

@@ -9,12 +9,15 @@
   failed_when: vm_id_result.rc != 0
   changed_when: false
 
+# The VM may not exist when its creation failed earlier and was rescued.
 - name: "Host id: {{ host_id }} -- Terminate VM for this host"
   ansible.builtin.command: onevm terminate {{ vm_id_result.stdout }}
   register: terminate_result
   failed_when: terminate_result.rc != 0
+  when: vm_id_result.stdout | trim | length > 0
 
 - name: "Host id: {{ host_id }} -- Delete VM Group"
   ansible.builtin.command: onevmgroup delete only-host-{{ host_id }}
   register: vmgroup_delete
-  failed_when: vmgroup_delete.rc != 0
+  # Tolerate a VM group that was never created (failed/rescued earlier runs).
+  failed_when: vmgroup_delete.rc != 0 and 'rror getting' not in vmgroup_delete.stderr

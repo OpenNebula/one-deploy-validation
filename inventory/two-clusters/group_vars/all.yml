@@ -1,4 +1,8 @@
 ---
+# Two-cluster full-coverage test configuration.
+# Replace every <placeholder> before running:
+#   make validation I=inventory/two-clusters/hosts.yml
+
 ansible_python_interpreter: /usr/bin/python3
 
 ansible_user: root
@@ -10,11 +14,11 @@ ensure_hosts: true
 unattend_disable: true
 update_pkg_cache: true
 
-one_version: '6.10'
-one_pass: '<oneadmin_password_here>'
+one_version: '7.2'
+one_pass: 'xxxxxxx'
 
 # ansible key to use
-ansible_ssh_private_key_file: '<ssh_key>'
+ansible_ssh_private_key_file: '.ssh/one'
 
 validation:
 
@@ -28,19 +32,22 @@ validation:
   # Restrict validation to specific clusters (default: all clusters with hosts):
   # clusters: [clusterA, clusterB]
   #
-  # Per-cluster resource overrides (default: auto-discovered — first image
-  # datastore of the cluster, and the configured/first vnet of the cluster):
-  # cluster_overrides:
-  #   clusterA:
-  #     vnet_name: VLAN_580
-  #     image_ds_id: 101
+  # Per-cluster resource overrides. Without overrides, each cluster uses its
+  # first image datastore and (if the names configured below do not exist in
+  # the cluster) falls back to the cluster's first vnet. Pin them explicitly
+  # if a cluster has several vnets/datastores:
+  cluster_overrides:
+    clusterA:
+      vnet_name: 'vnetA'
+    clusterB:
+      vnet_name: 'vnetB'
   #
   # Note: narrowing `clusters` on a later run does not clean up test artifacts
   # created for clusters validated by earlier runs.
 
   # TEST CASE NAME: Core Services
   # DESCRIPTION: Check the status of OpenNebula core services, as listed in `service_list`,
-  # also tests the resilience of some of them by restarting. 
+  # also tests the resilience of some of them by restarting.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_core_services: true
   core_services:
@@ -58,16 +65,16 @@ validation:
         desc: OpenNebula Fireedge GUI
       # Add other services if more should be checked.
     check_fireedge_ui: true
+
   # TEST CASE NAME: OneFlow Smoke Test (service/state/vms)
-  # DESCRIPTION: Creates and instantiates a temporary OneFlow service, checks its state and
-  # VM count, and reports the result. If the service does not reach RUNNING, the state is
-  # recorded as a comment in the HTML report.
+  # DESCRIPTION: Creates and instantiates a temporary OneFlow service per cluster, checks its
+  # state and VM count, and reports the result. If the service does not reach RUNNING, the
+  # state is recorded as a comment in the HTML report.
   # OUTPUT: OneFlow smoke test result and optional failure comment in /tmp/cloud_verification_report.html
   run_one_flow: true
- 
 
   # TEST CASE NAME: Networking subsystem validation
-  # DESCRIPTION: Instantiates a VM at each OpenNebula vNET, checks external connectivity
+  # DESCRIPTION: Instantiates a VM at each vNET of each cluster, checks external connectivity
   # from the test VM
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   networks_verification: true
@@ -75,41 +82,42 @@ validation:
     ext_host: 'google.com'
 
   # TEST CASE NAME: Storage Benchmark
-  # DESCRIPTION: Instantiates a VM for running storage benchmark from it. The VM needs to
-  # have public internet access to install dependencies. The VM's connected network can
-  # be configured.
+  # DESCRIPTION: Instantiates a VM per cluster for running the storage benchmark from it.
+  # The VM needs public internet access to install dependencies. `vnet_name` is used when
+  # a vnet with this name exists in the cluster; otherwise the cluster's vnet (or the
+  # cluster_overrides entry) is used.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
-  run_storage_benchmark: true
+  run_storage_benchmark: false
   storage_benchmark:
-    vnet_name: public
+    vnet_name: 'public'
 
   # TEST CASE NAME: Network Benchmark
   # DESCRIPTION: Runs an iperf bandwidth and ping benchmark between all hypervisor hosts
   # that are listed in the inventory.
   # OUTPUT: Ansible execution output in the command line
-  run_network_benchmark: true
+  run_network_benchmark: false
   network_benchmark:
     iperf_port: 5201
     iperf_test_time: 10
 
   # TEST CASE NAME: Connectivity Matrix
-  # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the 
-  # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing
-  # on the configured bridge) and runs a connectivity test to all other VMs running on
-  # the other hosts.
-  # OUTPUT: 
+  # DESCRIPTION: Instantiates a test VM on each hypervisor host, pinned to it, using the
+  # vnet and template of the host's cluster. Connectivity is only tested between VMs of
+  # the same cluster (clusters have separate L2 networks).
+  # OUTPUT:
   #    - HTML document at /tmp/conn-matrix-report.html
   #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
   run_conn_matrix: false
   conn_matrix:
-    bridge_name: br0
+    bridge_name: 'br0'
     ping_count: 10
-    vnet_name: public
+    vnet_name: 'public'
     market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: VM instantiation
-  # DESCRIPTION: Fetches a VM template and image from the OpenNebula Marketplace and instantiates it.
-  # Optionally also instantiates a VNET, attaches it to the VM, and checks connectivity.
+  # DESCRIPTION: Fetches a VM template and image from the OpenNebula Marketplace, exports it
+  # to each cluster's image datastore and instantiates it anchored to the cluster's vnet.
+  # Optionally also creates a per-cluster test VNET, attaches a NIC, and checks connectivity.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_test_vm: true
   test_vm:
@@ -122,8 +130,11 @@ validation:
           NETWORK="YES",
           REPORT_READY="YES",
           SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
-          TOKEN="YES" 
+          TOKEN="YES"
         ]
+    # false: reuse existing vnets (vnet_name if present in the cluster, else the
+    # cluster's own vnet / cluster_overrides). true: create a per-cluster test
+    # vnet from the `vnet` definition below (name gets a -<cluster> suffix).
     create_vnet: false
     vnet_name: 'public'
     vnet:
@@ -144,49 +155,51 @@ validation:
   # TEST CASE NAME: LDAP Authentication
   # DESCRIPTION: Validates LDAP bind, OpenNebula LDAP auth configuration, LDAP login to XML-RPC,
   # FireEdge UI login via LDAP, and verifies local auth fallback.
+  # Enable only if an LDAP server is available and the values below are filled in.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_ldap_auth: false
   ldap_auth:
-    server: "172.20.0.7:389"
-    base_dn: "dc=example,dc=com"
-    bind_dn: "uid=admin,dc=example,dc=com"
-    bind_pass: "newpassword"
-    ldap_user: "oneuser"
-    ldap_pass: "onepassword"
-    local_user: "oneadmin"
-    local_auth_file: "/var/lib/one/.one/one_auth"
+    server: '<ldap_host>:389'
+    base_dn: 'dc=example,dc=com'
+    bind_dn: 'uid=admin,dc=example,dc=com'
+    bind_pass: '<ldap_bind_password>'
+    ldap_user: '<ldap_test_user>'
+    ldap_pass: '<ldap_test_password>'
+    local_user: 'oneadmin'
+    local_auth_file: '/var/lib/one/.one/one_auth'
     group_mapping:
-      expected_group_name: "opennebula-group"
-      expected_group_id: ""
-      ldap_group_dn: "cn=opennebula-group,ou=group,dc=example,dc=com"
-      ldap_group_member_attr: "memberUid"
-    fireedge_proto: "http"
-    fireedge_login_endpoint: "/fireedge/api/auth/"
+      expected_group_name: 'opennebula-group'
+      expected_group_id: ''
+      ldap_group_dn: 'cn=opennebula-group,ou=group,dc=example,dc=com'
+      ldap_group_member_attr: 'memberUid'
+    fireedge_proto: 'http'
+    fireedge_login_endpoint: '/fireedge/api/auth/'
     fireedge_skip_tls_verify: true
-    rpc2_proto: "http"
-    rpc2_path: "/RPC2"
+    rpc2_proto: 'http'
+    rpc2_path: '/RPC2'
     rpc2_skip_tls_verify: true
 
   # TEST CASE NAME: VM High Availability
-  # DESCRIPTION: The prerequisite is to have VM HA configured, see details in OpenNebula documentation.
-  # Instantiates a VM and produces an error on its host with a configurable method (e.g. bringing the 
-  # main interface down). Checks that the error is detected and the VM is migrated to another host.
-  # NOTE: Blocks the test execution and asks for manual confirmation before the fencing occurs (that will shut
-  # down the host). Does not provide an automatic way to recover the host.
-  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  # DESCRIPTION: Runs once per cluster. The prerequisite is to have VM HA (host error hooks)
+  # configured, see the OpenNebula documentation. Instantiates a VM anchored to the cluster
+  # and produces an error on its host (e.g. bringing an interface down). Checks that the
+  # error is detected and the VM is migrated to another host of the same cluster.
+  # WARNING: DESTRUCTIVE — fences (shuts down) one hypervisor PER CLUSTER and does not
+  # recover it automatically. The play pauses for manual confirmation before fencing.
+  # Set to false if VM HA hooks are not configured (miniONE does not set them up).
   run_vm_ha: false
   vm_ha:
     produce_error_method: 'if_down'
     if_down_params:
-      interface_name: 'br-test'
+      interface_name: 'br0'
     fencing_check_retries: 8
     fencing_check_delay: 60
     vm_market_name: 'Alpine Linux 3.21'
 
   # TEST CASE NAME: Front-end High Availability
-  # DESCRIPTION: The prerequisite is to have the Front-end HA configured, see details in OpenNebula documentation.
-  # Checks that config file contents are the same on all FEs, checks the selected leader, simulates a leader failover
-  # by stopping the opennebula service and verifies that a new leader is selected.
+  # DESCRIPTION: Requires multiple frontends with FE HA (RAFT) configured. This inventory
+  # has a single frontend, so the test is disabled; add the other FEs to the `frontend`
+  # group and enable it if FE HA is deployed.
   # OUTPUT: HTML document at /tmp/fe_ha_report.html
   run_fe_ha: false
   fe_ha:
@@ -196,30 +209,19 @@ validation:
     one_zone_name: OpenNebula
 
   # TEST CASE NAME: Federation Validation
-  # DESCRIPTION: Validates OpenNebula Federation configuration and data synchronization across zones.
-  # Checks federation configuration (MODE, ZONE_ID, MASTER_ONED), zone discovery, endpoint connectivity,
-  # federated data synchronization (users, groups, VDCs, ACL rules, marketplaces), database backend consistency,
-  # FireEdge configuration, and oneadmin user consistency across zones.
+  # DESCRIPTION: Requires an OpenNebula federation (multiple zones). Disabled for a
+  # single-zone, two-cluster deployment — clusters are NOT federation zones.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_federation: false
   federation:
-    # Minimum number of zones expected in the federation
     min_zones: 2
-    # Timeout for endpoint connectivity tests (seconds)
     endpoint_timeout: 10
-    # Check FireEdge configuration
     check_fireedge: true
-    # Check database backend consistency
     check_db_backend: true
-    # Verify oneadmin user consistency
     verify_oneadmin: true
-    # Zone group (defaults to frontend_group or 'frontend')
     zone_group: frontend
-    # XML-RPC port (default: 2633)
     xmlrpc_port: 2633
-    # gRPC port (default: 2634)
     grpc_port: 2634
-    # Configuration files
     oned_conf: /etc/one/oned.conf
     fireedge_conf: /etc/one/fireedge-server.conf
 
@@ -230,19 +232,6 @@ validation:
     frontend_role_label: "OpenNebula FE VM"
     hypervisor_role_label: "KVM"
     # Optional per-frontend overrides keyed by inventory hostname.
-    # Example:
-    # frontends:
-    #   fe:
-    #     network_ips:
-    #       - "10.125.0.10"
-    #       - "10.126.0.10"
     frontends: {}
     # Optional per-hypervisor overrides keyed by inventory hostname.
-    # Example:
-    # hypervisors:
-    #   h1:
-    #     network_ips:
-    #       - "10.125.208.6"
-    #       - "10.126.208.6"
-    #       - "10.127.208.6"
     hypervisors: {}

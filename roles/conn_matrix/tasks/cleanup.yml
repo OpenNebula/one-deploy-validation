@@ -19,4 +19,5 @@
   ansible.builtin.shell: |
     ip addr del {{ _my_vm_ip | ansible.utils.ipmath(_mapping_length) }}/32 dev {{ _conn_matrix_bridge_name }}
     ip route del {{ _my_vm_ip }}/32 dev {{ _conn_matrix_bridge_name }}
+  when: hostname_cmd in (host_name_to_vm_ip | d({}))
   ignore_errors: true

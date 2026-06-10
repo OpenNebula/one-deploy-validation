@@ -1,22 +1,8 @@
 ---
- 
-- name: "Preparation tasks"
+- name: Run test VM validation per cluster
   ansible.builtin.include_tasks:
-    file: prepare.yml
-  when: validation.run_test_vm | default(true) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
-
-- name: Network related tasks
-  ansible.builtin.include_tasks:
-    file: network.yml
-
-- name: VM creation related tasks
-  ansible.builtin.include_tasks:
-    file: create_vm.yml
-
-- name: Test connectivity
-  ansible.builtin.include_tasks:
-    file: connect.yml
-
-- name: Cleanup things
-  ansible.builtin.include_tasks:
-    file: cleanup.yml
+    file: per_cluster.yml
+  loop: "{{ _one_clusters }}"
+  loop_control:
+    loop_var: current_cluster
+    label: "{{ current_cluster.name }}"

@@ -29,7 +29,7 @@
 
 - name: Save host error detection
   set_fact:
-    verification_result: "{{ (verification_result | default({})) | combine({'VM HA: host error detected on host': host_name }) }}"
+    verification_result: "{{ (verification_result | default({})) | combine({'VM HA: host error detected on host' ~ current_cluster.report_suffix: host_name }) }}"
 
 - name: Check that the hook is triggered (after last timestamp)
   ansible.builtin.shell: |
@@ -46,7 +46,7 @@
 
 - name: Save hook triggered
   set_fact:
-    verification_result: "{{ verification_result | combine({'VM HA: error hook triggered': 'ok'}) }}"
+    verification_result: "{{ verification_result | combine({'VM HA: error hook triggered' ~ current_cluster.report_suffix: 'ok'}) }}"
 
 - name: Check that the fencing gets triggered (this might take several minutes, after last timestamp)
   ansible.builtin.shell: |
@@ -64,7 +64,7 @@
 
 - name: Save fencing triggered
   set_fact:
-    verification_result: "{{ verification_result | combine({'VM HA: host fencing triggered on host': host_name }) }}"
+    verification_result: "{{ verification_result | combine({'VM HA: host fencing triggered on host' ~ current_cluster.report_suffix: host_name }) }}"
 
 - name: Check for "Fencing success" in host_error.log (after last timestamp)
   ansible.builtin.shell: |
@@ -82,7 +82,7 @@
 
 - name: Save fencing success
   set_fact:
-    verification_result: "{{ verification_result | combine({'VM HA: host fencing successful on host': host_name }) }}"
+    verification_result: "{{ verification_result | combine({'VM HA: host fencing successful on host' ~ current_cluster.report_suffix: host_name }) }}"
 
 - name: Check for "Hook finished" in host_error.log (after last timestamp)
   ansible.builtin.shell: |
@@ -100,7 +100,7 @@
 
 - name: Save hook finished
   set_fact:
-    verification_result: "{{ verification_result | combine({'VM HA: error hook successful': 'ok'}) }}"
+    verification_result: "{{ verification_result | combine({'VM HA: error hook successful' ~ current_cluster.report_suffix: 'ok'}) }}"
 
 - name: Wait for VM to be in running state on a new host
   ansible.builtin.shell: >
@@ -119,7 +119,7 @@
 
 - name: Save VM recovery success on new host
   set_fact:
-    verification_result: "{{ verification_result | combine({'VM HA: VM recovered successfully on host': new_vm_hostname.stdout}) }}"
+    verification_result: "{{ verification_result | combine({'VM HA: VM recovered successfully on host' ~ current_cluster.report_suffix: new_vm_hostname.stdout}) }}"
 
 - name: Delete test VM
   ansible.builtin.shell: |

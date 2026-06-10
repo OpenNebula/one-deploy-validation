@@ -11,7 +11,11 @@
         }, recursive=True)
       }}
 
-- name: Run storage benchmark test
+- name: Run storage benchmark test per cluster
   ansible.builtin.include_tasks:
     file: "{{ role_path }}/tasks/storage_benchmark.yml"
+  loop: "{{ _one_clusters }}"
+  loop_control:
+    loop_var: current_cluster
+    label: "{{ current_cluster.name }}"
 

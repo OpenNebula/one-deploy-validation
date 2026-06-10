@@ -1,16 +1,18 @@
 - name: Verify that VM image is in ready state
   ansible.builtin.shell: >
-    oneimage list --f ID={{ test_vm_template_image_id }} -l STAT --no-header
+    oneimage list --f ID={{ _test_vm_template_image_ids_map[current_cluster.name] }} -l STAT --no-header
   register: image_state
   until: image_state.stdout in [ 'rdy', 'used' ]
   retries: 10
   delay: 10
 
+# --nic anchors the VM to the cluster: the scheduler only considers hosts of
+# the cluster the vnet belongs to.
 - name: Instantiate test VM
   ansible.builtin.shell: >
-    onetemplate instantiate {{ test_vm_template_id }} 
+    onetemplate instantiate {{ _test_vm_template_ids_map[current_cluster.name] }} --nic '{{ current_cluster.vnet_name }}'
   register: vm_id
-  failed_when: "vm_id.rc != 0" 
+  failed_when: "vm_id.rc != 0"
 
 - name: Wait for VM come up
   ansible.builtin.shell: >
@@ -23,6 +25,4 @@
 
 - name: Verify test VM
   set_fact:
-    verification_result: "{{ (verification_result | default({})) | combine({'Test VM instantiation' : 'ok' }) }}"
-
-
+    verification_result: "{{ (verification_result | default({})) | combine({'Test VM instantiation' ~ current_cluster.report_suffix : 'ok' }) }}"

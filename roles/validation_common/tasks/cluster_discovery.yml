@@ -1,0 +1,205 @@
+---
+# Discovers OpenNebula clusters and the resources (hosts, image datastore,
+# vnets) each one owns. Only clusters with at least one host are validated.
+# Runs on the primary frontend only (see main.yml); other hosts read the
+# facts through hostvars.
+#
+# Facts produced:
+#   one_clusters        - list of cluster entries
+#   one_clusters_multi  - true when more than one cluster is validated
+#   host_id_to_cluster  - map: OpenNebula host ID (string) -> cluster entry
+
+# Re-running discovery in the same play must not duplicate entries.
+- name: Initialize cluster facts
+  ansible.builtin.set_fact:
+    _clusters_raw: []
+    one_clusters: []
+    host_id_to_cluster: {}
+
+- name: Get cluster pool
+  ansible.builtin.shell: onecluster list -j
+  register: cluster_list_json
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+- name: Get datastore pool
+  ansible.builtin.shell: onedatastore list -j
+  register: ds_list_json
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+- name: Get vnet pool
+  ansible.builtin.shell: onevnet list -j
+  register: vnet_list_json
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+# A pool with a single element arrives as a mapping instead of a list.
+- name: Normalize resource pools
+  ansible.builtin.set_fact:
+    _cluster_pool: "{{ [_cp] if _cp is mapping else (_cp or []) }}"
+    _ds_pool: "{{ [_dp] if _dp is mapping else (_dp or []) }}"
+    _vnet_pool: "{{ [_vp] if _vp is mapping else (_vp or []) }}"
+  vars:
+    _cp: "{{ (cluster_list_json.stdout | from_json).CLUSTER_POOL.CLUSTER | d([]) }}"
+    _dp: "{{ (ds_list_json.stdout | from_json).DATASTORE_POOL.DATASTORE | d([]) }}"
+    _vp: "{{ (vnet_list_json.stdout | from_json).VNET_POOL.VNET | d([]) }}"
+
+- name: Fail when a requested cluster does not exist
+  ansible.builtin.assert:
+    that: >-
+      validation.clusters | d([])
+      | difference(_cluster_pool | map(attribute='NAME') | list)
+      | length == 0
+    fail_msg: >-
+      validation.clusters contains unknown cluster(s):
+      {{ validation.clusters | d([])
+         | difference(_cluster_pool | map(attribute='NAME') | list)
+         | join(', ') }}
+
+- name: Record clusters skipped for having no hosts
+  ansible.builtin.set_fact:
+    verification_result: >-
+      {{ (verification_result | d({}))
+         | combine({'Cluster ' ~ item.NAME ~ ' validation': 'skipped (no hosts)'}) }}
+  loop: "{{ _cluster_pool }}"
+  loop_control:
+    label: "{{ item.NAME }}"
+  vars:
+    _host_ids: >-
+      {{ ([item.HOSTS.ID] if item.HOSTS.ID is string else item.HOSTS.ID)
+         if (item.HOSTS.ID is defined and item.HOSTS.ID) else [] }}
+  when:
+    - _host_ids | length == 0
+    - (validation.clusters is not defined) or (item.NAME in validation.clusters)
+
+- name: Build raw cluster entries
+  ansible.builtin.set_fact:
+    _clusters_raw: "{{ (_clusters_raw | d([])) + [_entry] }}"
+  loop: "{{ _cluster_pool }}"
+  loop_control:
+    label: "{{ item.NAME }}"
+  vars:
+    _host_ids: >-
+      {{ ([item.HOSTS.ID] if item.HOSTS.ID is string else item.HOSTS.ID)
+         if (item.HOSTS.ID is defined and item.HOSTS.ID) else [] }}
+    _ds_ids: >-
+      {{ ([item.DATASTORES.ID] if item.DATASTORES.ID is string else item.DATASTORES.ID)
+         if (item.DATASTORES.ID is defined and item.DATASTORES.ID) else [] }}
+    _vnet_ids: >-
+      {{ ([item.VNETS.ID] if item.VNETS.ID is string else item.VNETS.ID)
+         if (item.VNETS.ID is defined and item.VNETS.ID) else [] }}
+    _override: "{{ (validation.cluster_overrides | d({})).get(item.NAME, {}) }}"
+    _entry:
+      id: "{{ item.ID }}"
+      name: "{{ item.NAME }}"
+      host_ids: "{{ _host_ids }}"
+      # DATASTORE TYPE "0" = image datastore
+      image_ds_id: >-
+        {{ _override.image_ds_id | d(
+             _ds_pool | selectattr('ID', 'in', _ds_ids)
+                      | selectattr('TYPE', 'eq', '0')
+                      | map(attribute='ID') | list | first | d('')
+           ) }}
+      vnet_names: "{{ _vnet_pool | selectattr('ID', 'in', _vnet_ids) | map(attribute='NAME') | list }}"
+      vnet_override: "{{ _override.vnet_name | d('') }}"
+  when:
+    - _host_ids | length > 0
+    - (validation.clusters is not defined) or (item.NAME in validation.clusters)
+
+- name: Fail when no cluster is left to validate
+  ansible.builtin.assert:
+    that: _clusters_raw | d([]) | length > 0
+    fail_msg: "No OpenNebula cluster with hosts found to validate."
+
+# Non-native Jinja renders this as the string 'True'/'False' — consumers must
+# always use `| bool`.
+- name: Set multi-cluster flag
+  ansible.builtin.set_fact:
+    one_clusters_multi: "{{ (_clusters_raw | length) > 1 }}"
+
+# vnet resolution per cluster:
+#   override -> (test vnet to be created, suffixed) -> existing legacy name
+#   in this cluster -> first vnet of the cluster
+- name: Finalize cluster entries
+  ansible.builtin.set_fact:
+    one_clusters: "{{ (one_clusters | d([])) + [item | combine(_extra)] }}"
+  loop: "{{ _clusters_raw }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    _suffix: "{{ (one_clusters_multi | bool) | ternary('-' ~ item.name, '') }}"
+    _test_vm_cfg: "{{ validation.test_vm | d({}) }}"
+    _test_vnet: "{{ _test_vm_cfg.vnet_name | d('VLAN_580') }}"
+    _cm_vnet: "{{ (validation.conn_matrix | d({})).vnet_name | d('vnet-default') }}"
+    _sb_vnet: "{{ (validation.storage_benchmark | d({})).vnet_name | d('VLAN_580') }}"
+    _primary_vnet: >-
+      {{ item.vnet_override if item.vnet_override
+         else ((_test_vnet ~ _suffix) if (_test_vm_cfg.create_vnet | d(true))
+         else (_test_vnet if _test_vnet in item.vnet_names
+         else (item.vnet_names | first | d('')))) }}
+    _extra:
+      name_suffix: "{{ _suffix }}"
+      report_suffix: "{{ (one_clusters_multi | bool) | ternary(' — cluster ' ~ item.name, '') }}"
+      vnet_name: "{{ _primary_vnet }}"
+      conn_matrix_vnet_name: >-
+        {{ item.vnet_override if item.vnet_override
+           else (_cm_vnet if _cm_vnet in item.vnet_names else _primary_vnet) }}
+      storage_vnet_name: >-
+        {{ item.vnet_override if item.vnet_override
+           else (_sb_vnet if _sb_vnet in item.vnet_names else _primary_vnet) }}
+
+- name: Assert every validated cluster has an image datastore and a usable vnet
+  ansible.builtin.assert:
+    that:
+      - item.image_ds_id | string | length > 0
+      - item.vnet_name | string | length > 0
+    fail_msg: >-
+      Cluster '{{ item.name }}' cannot be validated:
+      image datastore='{{ item.image_ds_id }}', primary vnet='{{ item.vnet_name }}'.
+      Add the missing resource to the cluster or set
+      validation.cluster_overrides.{{ item.name }} in the inventory.
+  loop: "{{ one_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# The resolved vnet must either already exist in the cluster, or be the test
+# vnet that the test_vm role will create later in this run.
+- name: Assert the resolved test vnet will exist
+  ansible.builtin.assert:
+    that: >-
+      (item.vnet_name in item.vnet_names) or
+      (((validation.test_vm | d({})).create_vnet | d(true))
+       and (validation.run_test_vm | d(true))
+       and not item.vnet_override)
+    fail_msg: >-
+      Cluster '{{ item.name }}': the resolved test vnet '{{ item.vnet_name }}'
+      does not exist in the cluster and will not be created during this run
+      (run_test_vm/create_vnet disabled, or the override names a vnet outside
+      the cluster). Create the vnet, enable run_test_vm with create_vnet, or
+      fix validation.cluster_overrides.{{ item.name }}.vnet_name.
+  loop: "{{ one_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Build host-to-cluster map
+  ansible.builtin.set_fact:
+    host_id_to_cluster: >-
+      {{ (host_id_to_cluster | d({}))
+         | combine(dict(item.host_ids | zip([item] * (item.host_ids | length)))) }}
+  loop: "{{ one_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Show validated clusters
+  ansible.builtin.debug:
+    msg: >-
+      Validating cluster '{{ item.name }}' (id={{ item.id }},
+      image_ds={{ item.image_ds_id }}, vnet='{{ item.vnet_name }}',
+      hosts={{ item.host_ids | join(',') }})
+  loop: "{{ one_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"

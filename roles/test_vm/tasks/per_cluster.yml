@@ -1,0 +1,42 @@
+---
+- name: "Test VM validation for cluster '{{ current_cluster.name }}'"
+  block:
+    - name: "Preparation tasks"
+      ansible.builtin.include_tasks:
+        file: prepare.yml
+      when: validation.run_test_vm | default(true) and hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+
+    - name: Network related tasks
+      ansible.builtin.include_tasks:
+        file: network.yml
+
+    - name: VM creation related tasks
+      ansible.builtin.include_tasks:
+        file: create_vm.yml
+
+    - name: Test connectivity
+      ansible.builtin.include_tasks:
+        file: connect.yml
+
+    - name: Cleanup things
+      ansible.builtin.include_tasks:
+        file: cleanup.yml
+  rescue:
+    - name: Best-effort cleanup of a leaked test VM
+      ansible.builtin.shell: >
+        onevm terminate --hard {{ vm_id.stdout.split(':')[1] | trim }}
+      failed_when: false
+      when:
+        - vm_id is defined
+        - vm_id.stdout is defined
+        - "':' in (vm_id.stdout | string)"
+
+    - name: "Record test VM validation failure for cluster '{{ current_cluster.name }}'"
+      ansible.builtin.set_fact:
+        verification_result: >-
+          {{ (verification_result | d({}))
+             | combine({'Test VM validation' ~ current_cluster.report_suffix: 'failed'}) }}
+
+    - name: "Show failure"
+      ansible.builtin.debug:
+        msg: "Test VM validation failed in cluster '{{ current_cluster.name }}', continuing with the next cluster."

@@ -246,7 +246,8 @@
 {% if report_revision_version_label == '' %}{% set report_revision_version_label = report_version_label %}{% endif %}
 {% set report_revision_comment_text = template_report_revision_comment | default('', true) | trim %}
 {% if report_revision_comment_text == '' %}{% set report_revision_comment_text = 'Verification actions successful' %}{% endif %}
-{% set oned_version_text = checks.get('Oned version', 'N/A') | string %}
+{% set oned_version_text = checks.get('Oned version', arch.oned_version | default('', true)) | string %}
+{% if oned_version_text | trim == '' %}{% set oned_version_text = 'N/A' %}{% endif %}
 {% set oned_version_match = oned_version_text | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)') %}
 {% set deployment_opennebula_version = oned_version_match if oned_version_match else oned_version_text %}
 {% set deployment_zone_count = arch.zone_count | default(1) %}
@@ -257,12 +258,13 @@
 {% set deployment_federation = 'Multi-zone' if deployment_zone_count | int > 1 else 'Single Zone' %}
 {% set deployment_ha = 'Yes' if deployment_frontend_count > 1 else 'No' %}
 {% set deployment_networking = (arch_networks | map(attribute='label') | join(', ')) if arch_networks | length > 0 else 'Not discovered' %}
-{% set datastores_value = checks.get('Datastores list', []) %}
+{% set datastores_value = checks.get('Datastores list', arch.datastore_names | default([])) %}
 {% if datastores_value is sequence and datastores_value is not string %}
   {% set deployment_storage = datastores_value | join(', ') %}
 {% else %}
   {% set deployment_storage = datastores_value | default('Not discovered') %}
 {% endif %}
+{% if deployment_storage | trim == '' %}{% set deployment_storage = 'Not discovered' %}{% endif %}
 {% set gpu_ns = namespace(found=false) %}
 {% for hypervisor in arch_hypervisors %}
   {% if 'gpu' in (hypervisor.role_label | default('') | lower) %}

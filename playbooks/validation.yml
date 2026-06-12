@@ -304,6 +304,24 @@
         vnet_pool_xml = run(["onevnet", "list", "--xml"])
         vm_pool_xml = run(["onevm", "list", "--xml"])
 
+        oned_version = ""
+        m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", run(["oned", "-v"]))
+        if m:
+            oned_version = m.group(1)
+
+        datastore_names = []
+        ds_pool_xml = run(["onedatastore", "list", "--xml"])
+        if ds_pool_xml:
+            try:
+                ds_root = ET.fromstring(ds_pool_xml)
+                datastore_names = [
+                    name for name in (
+                        ds.findtext("NAME") or "" for ds in ds_root.findall("./DATASTORE")
+                    ) if name
+                ]
+            except Exception:
+                pass
+
         vnets = {}
         if vnet_pool_xml:
             try:
@@ -512,6 +530,8 @@
             "frontend_count": len(frontends),
             "hypervisor_count": len(hypervisors),
             "network_count": len(networks),
+            "oned_version": oned_version,
+            "datastore_names": datastore_names,
         }))
         PY
       args:

@@ -450,11 +450,11 @@
         <td>
           <div class="cn">{{ network_name }}</div>
           {% set test_vm_ip = results.get('Test VM IP', 'N/A') %}
-          {% set gw_ping_raw = results.get('\nNetwork GW ping, packet received', results.get('Network GW ping, packet received')) %}
-          {% set ext_ping_raw = results.get('\nExternal Host ping: ', results.get('External Host ping: ', results.get('\nExternal Host ping::', results.get('External Host ping::')))) %}
+          {% set gw_ping_raw = results.get('Network GW ping', results.get('\nNetwork GW ping, packet received', results.get('Network GW ping, packet received'))) %}
+          {% set ext_ping_raw = results.get('External Host ping', results.get('\nExternal Host ping: ', results.get('External Host ping: ', results.get('\nExternal Host ping::', results.get('External Host ping::'))))) %}
           {% set gw_ping = (gw_ping_raw | from_json) if gw_ping_raw is string and (gw_ping_raw | trim | regex_search('^\\{')) else gw_ping_raw %}
           {% set ext_ping = (ext_ping_raw | from_json) if ext_ping_raw is string and (ext_ping_raw | trim | regex_search('^\\{')) else ext_ping_raw %}
-          {% set dns_result = results.get('\nExternal host DNS resolvation', results.get('External host DNS resolvation')) %}
+          {% set dns_result = results.get('External host DNS resolution', results.get('\nExternal host DNS resolvation', results.get('External host DNS resolvation'))) %}
           {{ render_record_table('Validation Summary', [
             {'label': 'Test VM IP', 'value': test_vm_ip, 'mono': true},
             {'label': 'Gateway Check', 'value': 'Available' if gw_ping is mapping else 'Not available'},

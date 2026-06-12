@@ -8,9 +8,12 @@
     _export_name: "{{ _test_vm_name }}{{ current_cluster.name_suffix }}"
     _export_ds_id: "{{ current_cluster.image_ds_id }}"
 
+# Recorded only when the marketplace was actually used — in semi air-gapped
+# deployments the template pre-exists and the export is skipped.
 - name: Verify VM Download from Marketplace
   set_fact:
     verification_result: "{{ (verification_result | default({})) | combine({'Download a test VM template from the marketplace' ~ current_cluster.report_suffix : 'ok' }) }}"
+  when: (_export_cmd is not skipped) and _export_cmd.rc == 0
 
 - name: Write extra template variables to a temporary file on the remote host
   ansible.builtin.copy:

@@ -58,8 +58,8 @@
     ssh -i ~oneadmin/.ssh/id_rsa -o StrictHostKeyChecking=no root@{{item.stdout}} hostname
   register: vm_ssh_result
   until: vm_ssh_result.rc == 0
-  retries: 10
-  delay: 10
+  retries: 30
+  delay: 20
   loop: "{{ vm_ip.results }}"
   run_once: true
 
@@ -77,14 +77,14 @@
 
 - name: Check GW reachability from VM
   ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "ping -c 3 $(ip route show default | awk '/default/ {print $3}') | /usr/bin/jc --ping --pretty"
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "ping -c 10 \$(ip route show default | awk '/default/ {print \$3}') | jc --ping --pretty"
   register: gw_reachability
   loop: "{{ vm_ip.results }}"
   run_once: true
 
 - name: Check DNS resolvation
   ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "dig {{ validation.network.ext_host  }}   | /usr/bin/jc --dig -p | jq .[].answer.[].data"
+    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "dig {{ validation.network.ext_host }} | jc --dig -p | jq '.[].answer[].data'"
   register: dns_reachability
   loop: "{{ vm_ip.results }}"
   run_once: true
@@ -118,7 +118,7 @@
   vars:
     _nv_prefix: "{{ (_one_clusters_multi | bool) | ternary(current_cluster.name ~ '/', '') }}"
   set_fact:
-    network_verification_results: "{{ (network_verification_results | default({})) | combine({(_nv_prefix ~ item.0): {'Test VM IP': item.1, '\nNetwork GW ping, packet received': item.2, '\nExternal Host ping: ': item.3, '\nExternal host DNS resolvation':item.4}}) }}"
+    network_verification_results: "{{ (network_verification_results | default({})) | combine({(_nv_prefix ~ item.0): {'Test VM IP': item.1, 'Network GW ping': item.2, 'External Host ping': item.3, 'External host DNS resolution': item.4}}) }}"
   loop: "{{ one_networks.stdout.splitlines() | zip(vm_ips_list, gw_reachability_list, ext_host_reachability_list, dns_reachability_list) | list }}"
 
 

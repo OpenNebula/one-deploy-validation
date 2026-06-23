@@ -9,8 +9,12 @@
 # --nic anchors the VM to the cluster: the scheduler only considers hosts of
 # the cluster the vnet belongs to.
 - name: Instantiate test VM
+  vars:
+    _connect_vnet_name: >-
+      {{ ((validation.cluster_overrides | d({})).get(current_cluster.name, {})).vnet_name
+         | d(current_cluster.vnet_name) }}
   ansible.builtin.shell: >
-    onetemplate instantiate {{ _test_vm_template_ids_map[current_cluster.name] }} --nic '{{ current_cluster.vnet_name }}'
+    onetemplate instantiate {{ _test_vm_template_ids_map[current_cluster.name] }} --nic '{{ _connect_vnet_name }}'
   register: vm_id
   failed_when: "vm_id.rc != 0"
 

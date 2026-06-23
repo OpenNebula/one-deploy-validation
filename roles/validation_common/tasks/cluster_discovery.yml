@@ -93,6 +93,30 @@
       {{ ([item.VNETS.ID] if item.VNETS.ID is string else item.VNETS.ID)
          if (item.VNETS.ID is defined and item.VNETS.ID) else [] }}
     _override: "{{ (validation.cluster_overrides | d({})).get(item.NAME, {}) }}"
+    _nv_skip: "{{ (validation.network | d({})).skip_vnets | d([]) }}"
+    _nv_require_ip: "{{ (validation.network | d({})).require_ip_ar | d(true) }}"
+    _cluster_vnets: "{{ _vnet_pool | selectattr('ID', 'in', _vnet_ids) | list }}"
+    # vnets of the cluster eligible for automatic selection: not listed in
+    # validation.network.skip_vnets and (when require_ip_ar, the default)
+    # owning at least one IP4/IP6 Address Range. ETHER-only or AR-less vnets
+    # only assign a MAC address, so test VMs on them get no observable IP.
+    # An explicit cluster_overrides.<name>.vnet_name still wins unfiltered.
+    _eligible_vnet_names: >-
+      {%- set out = [] -%}
+      {%- for vn in _cluster_vnets -%}
+        {%- set ar_raw = (vn.AR_POOL | d({})).AR | d([]) -%}
+        {%- set ars = ([ar_raw] if ar_raw is mapping else ar_raw) -%}
+        {%- set ipc = namespace(n=0) -%}
+        {%- for ar in ars -%}
+          {%- if 'IP4' in (ar.TYPE | d('')) or 'IP6' in (ar.TYPE | d('')) -%}
+            {%- set ipc.n = ipc.n + 1 -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if (vn.NAME not in _nv_skip) and ((not (_nv_require_ip | bool)) or (ipc.n > 0)) -%}
+          {%- set _ = out.append(vn.NAME) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
     _entry:
       id: "{{ item.ID }}"
       name: "{{ item.NAME }}"
@@ -105,6 +129,7 @@
                       | map(attribute='ID') | list | first | d('')
            ) }}
       vnet_names: "{{ _vnet_pool | selectattr('ID', 'in', _vnet_ids) | map(attribute='NAME') | list }}"
+      vnet_names_eligible: "{{ _eligible_vnet_names }}"
       vnet_override: "{{ _override.vnet_name | d('') }}"
   when:
     - _host_ids | length > 0
@@ -124,6 +149,8 @@
 # vnet resolution per cluster:
 #   override -> (test vnet to be created, suffixed) -> existing legacy name
 #   in this cluster -> first vnet of the cluster
+# Automatic candidates are restricted to vnet_names_eligible (skip_vnets and,
+# by default, vnets owning an IP4/IP6 AR). Overrides bypass the filter.
 - name: Finalize cluster entries
   ansible.builtin.set_fact:
     one_clusters: "{{ (one_clusters | d([])) + [item | combine(_extra)] }}"
@@ -139,18 +166,18 @@
     _primary_vnet: >-
       {{ item.vnet_override if item.vnet_override
          else ((_test_vnet ~ _suffix) if (_test_vm_cfg.create_vnet | d(true))
-         else (_test_vnet if _test_vnet in item.vnet_names
-         else (item.vnet_names | first | d('')))) }}
+         else (_test_vnet if _test_vnet in item.vnet_names_eligible
+         else (item.vnet_names_eligible | first | d('')))) }}
     _extra:
       name_suffix: "{{ _suffix }}"
       report_suffix: "{{ (one_clusters_multi | bool) | ternary(' — cluster ' ~ item.name, '') }}"
       vnet_name: "{{ _primary_vnet }}"
       conn_matrix_vnet_name: >-
         {{ item.vnet_override if item.vnet_override
-           else (_cm_vnet if _cm_vnet in item.vnet_names else _primary_vnet) }}
+           else (_cm_vnet if _cm_vnet in item.vnet_names_eligible else _primary_vnet) }}
       storage_vnet_name: >-
         {{ item.vnet_override if item.vnet_override
-           else (_sb_vnet if _sb_vnet in item.vnet_names else _primary_vnet) }}
+           else (_sb_vnet if _sb_vnet in item.vnet_names_eligible else _primary_vnet) }}
 
 - name: Assert every validated cluster has an image datastore and a usable vnet
   ansible.builtin.assert:
@@ -160,6 +187,10 @@
     fail_msg: >-
       Cluster '{{ item.name }}' cannot be validated:
       image datastore='{{ item.image_ds_id }}', primary vnet='{{ item.vnet_name }}'.
+      Note: vnets in validation.network.skip_vnets, and (with require_ip_ar)
+      vnets without an IP4/IP6 Address Range, are not auto-selected
+      (cluster vnets: {{ item.vnet_names | join(', ') }};
+      eligible: {{ item.vnet_names_eligible | join(', ') }}).
       Add the missing resource to the cluster or set
       validation.cluster_overrides.{{ item.name }} in the inventory.
   loop: "{{ one_clusters }}"
@@ -199,6 +230,9 @@
     msg: >-
       Validating cluster '{{ item.name }}' (id={{ item.id }},
       image_ds={{ item.image_ds_id }}, vnet='{{ item.vnet_name }}',
+      conn_matrix_vnet='{{ item.conn_matrix_vnet_name }}',
+      storage_vnet='{{ item.storage_vnet_name }}',
+      excluded_vnets='{{ item.vnet_names | difference(item.vnet_names_eligible) | join(', ') }}',
       hosts={{ item.host_ids | join(',') }})
   loop: "{{ one_clusters }}"
   loop_control:

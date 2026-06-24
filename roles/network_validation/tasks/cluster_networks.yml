@@ -94,15 +94,15 @@
       loop: "{{ vms.results }}"
       run_once: true
 
-- name: Verify ssh connection to the test VM
-  ansible.builtin.shell: >
-    ssh -i ~oneadmin/.ssh/id_rsa -o StrictHostKeyChecking=no root@{{item.stdout}} hostname
-  register: vm_ssh_result
-  until: vm_ssh_result.rc == 0
-  retries: 30
-  delay: 20
-  loop: "{{ vm_ip.results }}"
-  run_once: true
+    - name: Verify ssh connection to the test VM
+      ansible.builtin.shell: >
+        ssh -i ~oneadmin/.ssh/id_rsa -o StrictHostKeyChecking=no root@{{item.stdout}} hostname
+      register: vm_ssh_result
+      until: vm_ssh_result.rc == 0
+      retries: 30
+      delay: 20
+      loop: "{{ vm_ip.results }}"
+      run_once: true
 
     - name: Save VM IPs to list
       set_fact:
@@ -116,19 +116,19 @@
       loop: "{{ vm_ip.results }}"
       run_once: true
 
-- name: Check GW reachability from VM
-  ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "ping -c 10 \$(ip route show default | awk '/default/ {print \$3}') | jc --ping --pretty"
-  register: gw_reachability
-  loop: "{{ vm_ip.results }}"
-  run_once: true
+    - name: Check GW reachability from VM
+      ansible.builtin.shell: |
+        ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "ping -c 10 \$(ip route show default | awk '/default/ {print \$3}') | jc --ping --pretty"
+      register: gw_reachability
+      loop: "{{ vm_ip.results }}"
+      run_once: true
 
-- name: Check DNS resolvation
-  ansible.builtin.shell: |
-    ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "dig {{ validation.network.ext_host }} | jc --dig -p | jq '.[].answer[].data'"
-  register: dns_reachability
-  loop: "{{ vm_ip.results }}"
-  run_once: true
+    - name: Check DNS resolvation
+      ansible.builtin.shell: |
+        ssh -i ~oneadmin/.ssh/id_rsa -q -oStrictHostKeyChecking=no root@{{item.stdout}} "dig {{ validation.network.ext_host }} | jc --dig -p | jq '.[].answer[].data'"
+      register: dns_reachability
+      loop: "{{ vm_ip.results }}"
+      run_once: true
 
     - name: Check external host reachability from the test VM
       ansible.builtin.shell: |
@@ -161,7 +161,6 @@
       set_fact:
         network_verification_results: "{{ (network_verification_results | default({})) | combine({(_nv_prefix ~ item.0): {'Test VM IP': item.1, '\nNetwork GW ping, packet received': item.2, '\nExternal Host ping: ': item.3, '\nExternal host DNS resolvation':item.4}}) }}"
       loop: "{{ _nv_networks | zip(vm_ips_list, gw_reachability_list, ext_host_reachability_list, dns_reachability_list) | list }}"
-
 
     - name: Remove test VMs
       ansible.builtin.shell: >

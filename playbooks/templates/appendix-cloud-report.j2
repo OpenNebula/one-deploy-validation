@@ -233,9 +233,6 @@
 {% set arch = template_report_architecture | default({}) %}
 {% set arch_frontends = arch.frontends | default([]) %}
 {% set arch_hypervisors = arch.hypervisors | default([]) %}
-{% set arch_networks = arch.networks | default([]) %}
-{% set arch_pre_networks = arch_networks[:2] %}
-{% set arch_post_networks = arch_networks[2:] %}
 {% set report_title = 'Cloud Verification Report' %}
 {% set report_task = 'Verification of an OpenNebula Cloud deployment' %}
 {% set report_customer_name = template_report_customer | default('N/A') %}
@@ -250,14 +247,14 @@
 {% if oned_version_text | trim == '' %}{% set oned_version_text = 'N/A' %}{% endif %}
 {% set oned_version_match = oned_version_text | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)') %}
 {% set deployment_opennebula_version = oned_version_match if oned_version_match else oned_version_text %}
-{% set deployment_zone_count = arch.zone_count | default(1) %}
-{% set deployment_frontend_count = arch.frontend_count | default(arch_frontends | length) %}
-{% set deployment_hypervisor_count = arch.hypervisor_count | default(arch_hypervisors | length) %}
-{% set hypervisor_role_name = ((arch_hypervisors[0].role_label if deployment_hypervisor_count > 0 and arch_hypervisors[0].role_label is defined else 'KVM') | string) %}
+{% set deployment_zone_count = arch.zone_count | default(1) | int %}
+{% set deployment_frontend_count = arch.frontend_count | default(arch_frontends | length) | int %}
+{% set deployment_hypervisor_count = arch.hypervisor_count | default(arch_hypervisors | length) | int %}
+{% set hypervisor_role_name = 'KVM' %}
 {% set deployment_hypervisor_label = deployment_hypervisor_count ~ ' ' ~ hypervisor_role_name ~ (' hypervisor' if deployment_hypervisor_count == 1 else ' hypervisors') %}
-{% set deployment_federation = 'Multi-zone' if deployment_zone_count | int > 1 else 'Single Zone' %}
+{% set deployment_federation = 'Multi-zone' if deployment_zone_count > 1 else 'Single Zone' %}
 {% set deployment_ha = 'Yes' if deployment_frontend_count > 1 else 'No' %}
-{% set deployment_networking = (arch_networks | map(attribute='label') | join(', ')) if arch_networks | length > 0 else 'Not discovered' %}
+{% set deployment_networking = 'Not included in target architecture' %}
 {% set datastores_value = checks.get('Datastores list', arch.datastore_names | default([])) %}
 {% if datastores_value is sequence and datastores_value is not string %}
   {% set deployment_storage = datastores_value | join(', ') %}
@@ -265,13 +262,7 @@
   {% set deployment_storage = datastores_value | default('Not discovered') %}
 {% endif %}
 {% if deployment_storage | trim == '' %}{% set deployment_storage = 'Not discovered' %}{% endif %}
-{% set gpu_ns = namespace(found=false) %}
-{% for hypervisor in arch_hypervisors %}
-  {% if 'gpu' in (hypervisor.role_label | default('') | lower) %}
-    {% set gpu_ns.found = true %}
-  {% endif %}
-{% endfor %}
-{% set deployment_other_components = 'NVIDIA GPU passthrough' if gpu_ns.found else 'None detected' %}
+{% set deployment_other_components = 'None detected' %}
 {% set deployment_applications = 'OpenNebula command line tool' %}
 
 {% set ns = namespace(core_services=[], vm_tests=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], other=[]) %}
@@ -365,60 +356,46 @@
   <div class="cards"><div class="card cp"><div class="num">{{ counts.pass }}</div><div class="lbl">Passed</div></div><div class="card cf"><div class="num">{{ counts.fail }}</div><div class="lbl">Failed</div></div><div class="card cw"><div class="num">{{ counts.warn }}</div><div class="lbl">Warnings</div></div><div class="card ct"><div class="num">{{ total }}</div><div class="lbl">Total</div></div></div>
   <div class="pgwrap"><div class="pglbl"><span>Overall Readiness</span><span id="pct-lbl">{{ pct }}% passing</span></div><div class="pgbar"><div class="pgfill" id="pgfill" style="width:{{ pct }}%"></div></div></div>
 
-  {% if arch_frontends | length > 0 or arch_hypervisors | length > 0 or arch_networks | length > 0 %}
+  {% if arch_frontends | length > 0 or arch_hypervisors | length > 0 %}
   <div class="arch-section">
     <div class="section-title">Target Architecture</div>
-    <div style="font-family:var(--mono);font-size:12px">
-      <div style="text-align:center;margin-bottom:6px">
-        <div class="arch-fe">
-          {{ arch.frontend_title | default('OpenNebula FE Servers' if arch_frontends | length > 1 else 'OpenNebula FE VM') }}
-          {% if arch_frontends | length == 1 %}
-            {% set frontend = arch_frontends[0] %}
-            {% if frontend.network_ips | default([]) | length > 0 %}
-          <small>{{ frontend.network_ips | join(' · ') }}</small>
-            {% elif frontend.detail | default('') != '' %}
-          <small>{{ frontend.detail }}</small>
-            {% elif frontend.label | default('') != '' %}
-          <small>{{ frontend.label }}</small>
-            {% endif %}
+
+    <div class="subblock">
+      <div class="section-title" style="margin:12px 0 8px">Frontends</div>
+      <div class="table-scroll">
+        <table class="gtable">
+          <thead><tr><th>Inventory Host</th><th>Address</th></tr></thead>
+          <tbody>
+          {% for frontend in arch_frontends %}
+            <tr>
+              <td class="mono">{{ frontend.inventory_name | default('') }}</td>
+              <td class="mono">{{ frontend.ansible_host | default('') }}</td>
+            </tr>
           {% else %}
-            {% for frontend in arch_frontends %}
-              {% if frontend.network_ips | default([]) | length > 0 %}
-          <small>{{ frontend.label }} · {{ frontend.network_ips | join(' · ') }}</small>
-              {% elif frontend.detail | default('') != '' %}
-          <small>{{ frontend.label }} · {{ frontend.detail }}</small>
-              {% else %}
-          <small>{{ frontend.label }}</small>
-              {% endif %}
-            {% endfor %}
-          {% endif %}
-        </div>
+            <tr><td colspan="2">No frontends defined in the inventory.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
       </div>
-      <div class="ac">│<br>│</div>
-      {% for network in arch_pre_networks %}
-      <div class="anet {{ network.class | default('nm') }}">{{ network.label }} — {{ network.cidr }}</div>
-      {% endfor %}
-      {% if arch_hypervisors | length > 0 %}
-      <div class="anodes">
-        {% for hypervisor in arch_hypervisors %}
-        <div class="anode">
-          <strong>{{ hypervisor.label }}{% if hypervisor.role_label | default('') != '' %} ({{ hypervisor.role_label }}){% endif %}</strong>
-          {% if hypervisor.network_memberships | default([]) | length > 0 %}
-            {% for membership in hypervisor.network_memberships %}
-          <div>{{ membership.label }}</div>
-            {% endfor %}
-          {% elif hypervisor.network_ips | default([]) | length > 0 %}
-          <div>{{ hypervisor.network_ips | join(' · ') }}</div>
+    </div>
+
+    <div class="subblock">
+      <div class="section-title" style="margin:16px 0 8px">Hypervisors</div>
+      <div class="table-scroll">
+        <table class="gtable">
+          <thead><tr><th>Inventory Host</th><th>Address</th></tr></thead>
+          <tbody>
+          {% for hypervisor in arch_hypervisors %}
+            <tr>
+              <td class="mono">{{ hypervisor.inventory_name | default('') }}</td>
+              <td class="mono">{{ hypervisor.ansible_host | default('') }}</td>
+            </tr>
           {% else %}
-          <div>{{ hypervisor.detail }}</div>
-          {% endif %}
-        </div>
-        {% endfor %}
+            <tr><td colspan="2">No hypervisors defined in the inventory.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
       </div>
-      {% endif %}
-      {% for network in arch_post_networks %}
-      <div class="anet {{ network.class | default('nm') }}">{{ network.label }} — {{ network.cidr }}</div>
-      {% endfor %}
     </div>
   </div>
   {% endif %}

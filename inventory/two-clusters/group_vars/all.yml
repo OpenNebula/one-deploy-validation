@@ -224,14 +224,3 @@ validation:
     grpc_port: 2634
     oned_conf: /etc/one/oned.conf
     fireedge_conf: /etc/one/fireedge-server.conf
-
-  # REPORT SECTION: Target Architecture
-  # DESCRIPTION: Controls optional label overrides for the architecture section in the
-  # HTML report. Networks are discovered live from OpenNebula VNET and VM NIC data.
-  architecture:
-    frontend_role_label: "OpenNebula FE VM"
-    hypervisor_role_label: "KVM"
-    # Optional per-frontend overrides keyed by inventory hostname.
-    frontends: {}
-    # Optional per-hypervisor overrides keyed by inventory hostname.
-    hypervisors: {}

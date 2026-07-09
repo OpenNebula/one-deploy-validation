@@ -190,6 +190,7 @@
         verification_result: "{{ report_verification_result }}"
         verification_comments: "{{ report_verification_comments }}"
         network_verification_results: "{{ report_network_verification_results }}"
+        conn_results_matrix: "{{ hostvars[report_frontend_host].conn_results_matrix | default({}) }}"
         template_report_architecture: "{{ discovered_report_architecture | default({}) }}"
         template_report_customer: "{{ prompt_report_customer }}"
         template_report_document_version: "{{ prompt_report_document_version }}"

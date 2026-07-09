@@ -226,6 +226,27 @@
     {% if status == 'pass' %}{% set counts.pass = counts.pass + 1 %}{% elif status == 'fail' %}{% set counts.fail = counts.fail + 1 %}{% elif status == 'warn' %}{% set counts.warn = counts.warn + 1 %}{% else %}{% set counts.info = counts.info + 1 %}{% endif %}
   {% endfor %}
 {% endif %}
+{% if validation_vars.run_conn_matrix | default(false) %}
+  {% set cm = conn_results_matrix | default({}) %}
+  {% set cm_ns = namespace(status=('pass' if cm | length > 0 else 'fail')) %}
+  {% set cm_hosts = cm.keys() | list %}
+  {% for src in cm_hosts %}
+    {% for dst in cm_hosts %}
+      {% if src != dst %}
+        {% set result_element = (cm[src] | dict2items | selectattr('key', 'search', dst + '.json$') | map(attribute='value') | list) %}
+        {% if result_element | length != 1 %}
+          {% if cm_ns.status != 'fail' %}{% set cm_ns.status = 'warn' %}{% endif %}
+        {% else %}
+          {% set result = result_element | first %}
+          {% if result.packet_loss_percent is not defined or result.packet_loss_percent | float != 0.0 %}
+            {% set cm_ns.status = 'fail' %}
+          {% endif %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+  {% if cm_ns.status == 'pass' %}{% set counts.pass = counts.pass + 1 %}{% elif cm_ns.status == 'fail' %}{% set counts.fail = counts.fail + 1 %}{% else %}{% set counts.warn = counts.warn + 1 %}{% endif %}
+{% endif %}
 {% set total = counts.pass + counts.fail + counts.warn %}
 {% set readiness_total = counts.pass + counts.fail + counts.warn %}
 {% set pct = ((counts.pass * 100 / readiness_total) | round(0, 'common')) | int if readiness_total > 0 else 0 %}
@@ -460,10 +481,7 @@
   <section class="data-section"><div class="section-title">Network Benchmarking Results</div><div class="section-title" style="margin-top:14px">Throughput (iperf3)</div><div class="table-scroll"><table class="gtable bench-table"><colgroup><col style="width:38%"><col style="width:38%"><col style="width:24%"></colgroup><thead><tr><th>Client host</th><th>Server</th><th class="num">Throughput</th></tr></thead><tbody>{% for host, data in network_benchmark.items() %}{% if data.iperf_results is defined and data.iperf_results.results is defined %}{% for it in data.iperf_results.results %}{% set bps = it.stdout | default('0') | float %}{% set server_name = ip_to_hostname.get(it.item) if ip_to_hostname is defined else None %}<tr><td>{{ host }}</td><td>{{ server_name | default(it.item, true) }}</td><td class="num">{{ '%.2f' | format(bps / 1000000.0) }} Mbps</td></tr>{% endfor %}{% else %}<tr><td colspan="3">No iperf3 results for {{ host }}</td></tr>{% endif %}{% endfor %}</tbody></table></div><div class="section-title" style="margin-top:18px">Ping (average RTT)</div><div class="table-scroll"><table class="gtable bench-table"><colgroup><col style="width:38%"><col style="width:38%"><col style="width:24%"></colgroup><thead><tr><th>Source host</th><th>Destination</th><th class="num">Avg RTT</th></tr></thead><tbody>{% for host, data in network_benchmark.items() %}{% if data.ping_exec is defined and data.ping_exec.results is defined %}{% for it in data.ping_exec.results %}{% set rtt_raw = it.stdout | default('') %}{% set dest_name = ip_to_hostname.get(it.item) if ip_to_hostname is defined else None %}<tr><td>{{ host }}</td><td>{{ dest_name | default(it.item, true) }}</td><td class="num">{% if rtt_raw != '' and rtt_raw != 'null' %}{{ '%.2f' | format(rtt_raw | float) }} ms{% else %}N/A{% endif %}</td></tr>{% endfor %}{% else %}<tr><td colspan="3">No ping results for {{ host }}</td></tr>{% endif %}{% endfor %}</tbody></table></div></section>
   {% endif %}
 
-  {% if validation_vars.run_conn_matrix | default(false) and conn_results_matrix is defined and conn_results_matrix | length > 0 %}
-  {% set all_hosts = conn_results_matrix.keys() | list %}
-  <section class="data-section"><div class="section-title">Connectivity Matrix</div><div class="table-scroll"><table class="gtable"><thead><tr><th>From / To</th>{% for dst in all_hosts %}<th>{{ dst }}</th>{% endfor %}</tr></thead><tbody>{% for src in all_hosts %}<tr><td><strong>{{ src }}</strong></td>{% for dst in all_hosts %}{% if src == dst %}<td class="matrix-warn">self</td>{% else %}{% set result_element = (conn_results_matrix[src] | dict2items | selectattr('key','search',dst + '.json$') | map(attribute='value') | list) %}{% if result_element | length != 1 %}<td class="matrix-warn">missing</td>{% else %}{% set result = result_element | first %}{% if result.packet_loss_percent is defined %}<td class="{{ 'matrix-ok' if result.packet_loss_percent == 0.0 else 'matrix-bad' }}">{{ result.packet_loss_percent }}%</td>{% else %}<td class="matrix-bad">missing</td>{% endif %}{% endif %}{% endif %}{% endfor %}</tr>{% endfor %}</tbody></table></div></section>
-  {% endif %}
+  {% include "connectivity-matrix.j2" %}
 
   <section class="data-section"><div class="section-title">Variables Used For Validation</div><pre>{{ validation_vars | to_nice_yaml }}</pre></section>
   <div class="footer"><div>OpenNebula Cloud Verification</div><div><a href="https://docs.opennebula.io/" target="_blank" rel="noopener">OpenNebula Docs</a>&nbsp;.&nbsp;<a href="https://github.com/OpenNebula/one-deploy" target="_blank" rel="noopener">one-deploy GitHub</a></div></div>

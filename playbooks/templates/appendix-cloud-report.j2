@@ -196,6 +196,44 @@
   {%- endif -%}
 {%- endmacro %}
 
+{% macro render_config_diff_comment(comment) -%}
+  <pre class="mini-pre">{{ {
+    'status': comment.status | default(''),
+    'reference_host': comment.reference_host | default(''),
+    'exclude_patterns': comment.exclude_patterns | default([])
+  } | to_nice_json(indent=2) }}</pre>
+  {%- set differences = comment.differences | default({}) -%}
+  {%- if differences | length > 0 -%}
+    {%- for host, files in differences.items() %}
+      {%- for file_path, diff in files.items() %}
+  <details class="mini-pre">
+    <summary>{{ host }} :: {{ file_path }} — {{ diff.status | default('differs') }}</summary>
+    <pre>{{ {
+      'reference_present': diff.reference_present | default(false),
+      'host_present': diff.host_present | default(false),
+      'reference_line_count': diff.reference_line_count | default(0),
+      'host_line_count': diff.host_line_count | default(0),
+      'reference_sha256': diff.reference_sha256 | default(''),
+      'host_sha256': diff.host_sha256 | default(''),
+      'reference_only_lines': diff.reference_only_lines | default([]),
+      'host_only_lines': diff.host_only_lines | default([])
+    } | to_nice_json(indent=2) }}</pre>
+  </details>
+      {%- endfor %}
+    {%- endfor %}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro render_comment(comment) -%}
+  {%- if comment is mapping and comment.differences is defined -%}
+{{ render_config_diff_comment(comment) }}
+  {%- elif comment is mapping or (comment is sequence and comment is not string) -%}
+<pre class="mini-pre">{{ comment | to_nice_json(indent=2) }}</pre>
+  {%- else -%}
+{{ comment }}
+  {%- endif -%}
+{%- endmacro %}
+
 {% macro render_check_table(items, section_title, table_id) -%}
   {%- if items | length > 0 -%}
   <section class="rst-section">
@@ -204,9 +242,10 @@
     </button>
     <table class="rtable" id="table-{{ table_id }}"><tbody>
       {%- for k, v in items %}
-      {%- set comment = ((verification_comments | default({})).get(k, '') | trim) %}
-      {%- set status = status_from(v, comment) | trim %}
-      <tr><td class="status-cell">{{ badge(status) }}</td><td><div class="cn">{{ k }}</div>{{ render_special_value(k, v) }}{% if comment != '' %}<div class="comment"><span class="comment-lbl">NOTE</span>{{ comment }}</div>{% endif %}</td></tr>
+      {%- set raw_comment = (verification_comments | default({})).get(k, '') %}
+      {%- set comment_text = (raw_comment | to_nice_json(indent=2)) if raw_comment is mapping or (raw_comment is sequence and raw_comment is not string) else (raw_comment | string | trim) %}
+      {%- set status = status_from(v, comment_text) | trim %}
+      <tr><td class="status-cell">{{ badge(status) }}</td><td><div class="cn">{{ k }}</div>{{ render_special_value(k, v) }}{% if comment_text != '' %}<div class="comment"><span class="comment-lbl">NOTE</span>{{ render_comment(raw_comment) }}</div>{% endif %}</td></tr>
       {%- endfor %}
     </tbody></table>
   </section>

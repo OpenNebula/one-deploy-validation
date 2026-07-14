@@ -193,6 +193,9 @@ validation:
     one_config_path:
       - /etc/one
       - /var/lib/one/remotes/etc
+    # Regex patterns for files excluded from FE config diff calculation.
+    config_diff_exclude_patterns:
+      - '\.bak$'
     one_zone_name: OpenNebula
 
   # TEST CASE NAME: Federation Validation

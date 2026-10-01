@@ -31,12 +31,14 @@ An interface is considered a DPDK interface when its ovs.iface configuration
 contains a type beginning with dpdk and an options:dpdk-devargs PCI
 address.
 For example:
+```yaml
 ovs:
   iface:
     vmnic0:
       set:
         - type: dpdk
         - options:dpdk-devargs: '0000:19:00.0'
+```
 
 The expected PCI list is therefore not duplicated in the validation
 configuration.
@@ -70,13 +72,16 @@ the persisted OVS DPDK allowlist and the runtime DPDK interfaces remain
 consistent.
 Example DPDK allowlist
 For two DPDK interfaces:
+```yaml
 ovs:
   set:
     - other_config:dpdk-init: 'true'
     - other_config:dpdk-extra: '-a 0000:19:00.0 -a 0000:5e:00.0'
+```
 
 The corresponding expected validation result contains:
 expected:
+```yaml
   - 0000:19:00.0
   - 0000:5e:00.0
 
@@ -87,6 +92,7 @@ effective_allowlist:
 runtime_dpdk_devices:
   - 0000:19:00.0
   - 0000:5e:00.0
+```
 
 with all missing, unexpected, duplicate and missing-hardware lists empty.
 

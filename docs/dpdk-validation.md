@@ -8,6 +8,10 @@ hypervisor.
 
 The test is disabled by default.
 
+To enable it, modify inventory/reference/group_vars/all.yml
+
+set the run_dpdk_pci_allowlist field to true
+
 ```yaml
 validation:
   run_dpdk_pci_allowlist: true

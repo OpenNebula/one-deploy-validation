@@ -80,8 +80,8 @@ ovs:
 ```
 
 The corresponding expected validation result contains:
-expected:
 ```yaml
+expected:
   - 0000:19:00.0
   - 0000:5e:00.0
 

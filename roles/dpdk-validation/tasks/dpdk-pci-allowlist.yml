@@ -1,0 +1,278 @@
+---
+- name: Initialize DPDK PCI allowlist validation
+  ansible.builtin.set_fact:
+    _dpdk_expected_raw: []
+    _dpdk_expected: []
+    _dpdk_allowlist_raw: []
+    _dpdk_allowlist: []
+    _dpdk_runtime_raw: []
+    _dpdk_runtime: []
+    _dpdk_allowlist_duplicates: []
+    _dpdk_runtime_duplicates: []
+    _dpdk_missing_hardware: []
+
+- name: Build expected DPDK PCI list from deployment inventory
+  ansible.builtin.set_fact:
+    _dpdk_expected_raw: >-
+      {%- set output = [] -%}
+      {%- set ovs_cfg = hostvars[inventory_hostname].get('ovs', {}) -%}
+      {%- set iface_cfg = ovs_cfg.get('iface', {}) -%}
+
+      {%- for iface_name, iface in iface_cfg.items() -%}
+        {%- set ns = namespace(
+              iface_type='',
+              devarg=''
+            ) -%}
+
+        {%- for entry in iface.get('set', []) -%}
+          {%- if 'type' in entry -%}
+            {%- set ns.iface_type = entry['type'] | string -%}
+          {%- endif -%}
+
+          {%- if 'options:dpdk-devargs' in entry -%}
+            {%- set ns.devarg =
+                  entry['options:dpdk-devargs'] | string -%}
+          {%- endif -%}
+        {%- endfor -%}
+
+        {%- if ns.iface_type.startswith('dpdk')
+              and ns.devarg | length > 0 -%}
+          {%- set _ = output.append(ns.devarg | lower) -%}
+        {%- endif -%}
+      {%- endfor -%}
+
+      {{ output }}
+
+- name: Normalize expected DPDK PCI device list
+  ansible.builtin.set_fact:
+    _dpdk_expected: "{{ _dpdk_expected_raw | unique | sort }}"
+
+- name: Show expected DPDK PCI devices
+  ansible.builtin.debug:
+    msg:
+      host: "{{ inventory_hostname }}"
+      expected_dpdk_pci_devices: "{{ _dpdk_expected }}"
+
+- name: Skip host without inventory-defined DPDK PCI devices
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "DPDK PCI allowlist on {{ inventory_hostname }}"
+    result_value: "skipped — no DPDK PCI devices declared in inventory"
+  when: _dpdk_expected | length == 0
+
+- name: Validate DPDK PCI allowlist
+  when: _dpdk_expected | length > 0
+  block:
+
+    - name: Read OVS DPDK EAL allowlist
+      ansible.builtin.command:
+        argv:
+          - ovs-vsctl
+          - get
+          - Open_vSwitch
+          - "."
+          - other_config:dpdk-extra
+      register: _dpdk_extra
+      changed_when: false
+      failed_when: >-
+        _dpdk_extra.rc != 0 and
+        'no key "dpdk-extra"' not in (_dpdk_extra.stderr | default(''))
+
+    - name: Read runtime OVS DPDK interfaces
+      ansible.builtin.command:
+        argv:
+          - ovs-vsctl
+          - --data=bare
+          - --no-headings
+          - --columns=name,type,options
+          - find
+          - Interface
+          - type=dpdk
+      register: _dpdk_interfaces
+      changed_when: false
+
+    - name: Parse effective DPDK PCI configuration
+      ansible.builtin.set_fact:
+        _dpdk_allowlist_raw: >-
+          {{
+            (_dpdk_extra.stdout | default(''))
+            | regex_findall(
+                '(?:-a|--allow)(?:=| +)([0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-9A-Fa-f]+)'
+              )
+            | map('lower')
+            | list
+          }}
+        _dpdk_runtime_raw: >-
+          {{
+            (_dpdk_interfaces.stdout | default(''))
+            | regex_findall(
+                'dpdk-devargs=([0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-9A-Fa-f]+)'
+              )
+            | map('lower')
+            | list
+          }}
+
+    - name: Normalize effective DPDK PCI configuration
+      ansible.builtin.set_fact:
+        _dpdk_allowlist: "{{ _dpdk_allowlist_raw | unique | sort }}"
+        _dpdk_runtime: "{{ _dpdk_runtime_raw | unique | sort }}"
+
+    - name: Detect duplicate allowlist entries
+      ansible.builtin.set_fact:
+        _dpdk_allowlist_duplicates: >-
+          {{
+            _dpdk_allowlist_duplicates + [item]
+          }}
+      loop: "{{ _dpdk_allowlist_raw | unique }}"
+      loop_control:
+        label: "{{ item }}"
+      when: >-
+        (_dpdk_allowlist_raw
+         | select('equalto', item)
+         | list
+         | length) > 1
+
+    - name: Detect duplicate runtime DPDK devices
+      ansible.builtin.set_fact:
+        _dpdk_runtime_duplicates: >-
+          {{
+            _dpdk_runtime_duplicates + [item]
+          }}
+      loop: "{{ _dpdk_runtime_raw | unique }}"
+      loop_control:
+        label: "{{ item }}"
+      when: >-
+        (_dpdk_runtime_raw
+         | select('equalto', item)
+         | list
+         | length) > 1
+
+    - name: Calculate DPDK PCI configuration differences
+      ansible.builtin.set_fact:
+        _dpdk_allowlist_missing: >-
+          {{
+            _dpdk_expected
+            | difference(_dpdk_allowlist)
+            | sort
+          }}
+        _dpdk_allowlist_unexpected: >-
+          {{
+            _dpdk_allowlist
+            | difference(_dpdk_expected)
+            | sort
+          }}
+        _dpdk_runtime_missing: >-
+          {{
+            _dpdk_expected
+            | difference(_dpdk_runtime)
+            | sort
+          }}
+        _dpdk_runtime_unexpected: >-
+          {{
+            _dpdk_runtime
+            | difference(_dpdk_expected)
+            | sort
+          }}
+
+    - name: Verify referenced PCI devices exist
+      ansible.builtin.stat:
+        path: "/sys/bus/pci/devices/{{ item }}"
+      register: _dpdk_pci_stat
+      loop: >-
+        {{
+          (_dpdk_expected + _dpdk_allowlist + _dpdk_runtime)
+          | unique
+          | sort
+        }}
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Build missing hardware list
+      ansible.builtin.set_fact:
+        _dpdk_missing_hardware: >-
+          {{
+            _dpdk_pci_stat.results
+            | rejectattr('stat.exists')
+            | map(attribute='item')
+            | list
+            | sort
+          }}
+
+    - name: Build DPDK PCI validation details
+      ansible.builtin.set_fact:
+        _dpdk_validation_details:
+          expected:
+            "{{ _dpdk_expected }}"
+          allowlist_configured:
+            "{{ _dpdk_extra.rc == 0 }}"
+          effective_allowlist:
+            "{{ _dpdk_allowlist }}"
+          runtime_dpdk_devices:
+            "{{ _dpdk_runtime }}"
+          missing_from_allowlist:
+            "{{ _dpdk_allowlist_missing }}"
+          unexpected_in_allowlist:
+            "{{ _dpdk_allowlist_unexpected }}"
+          missing_from_runtime:
+            "{{ _dpdk_runtime_missing }}"
+          unexpected_in_runtime:
+            "{{ _dpdk_runtime_unexpected }}"
+          duplicate_expected_entries:
+            "{{ [] if (_dpdk_expected_raw | length == _dpdk_expected | length) else _dpdk_expected_raw }}"
+          duplicate_allowlist_entries:
+            "{{ _dpdk_allowlist_duplicates }}"
+          duplicate_runtime_entries:
+            "{{ _dpdk_runtime_duplicates }}"
+          missing_hardware:
+            "{{ _dpdk_missing_hardware }}"
+          dpdk_extra:
+            "{{ _dpdk_extra.stdout | default('') | trim }}"
+
+    - name: Show DPDK PCI validation details
+      ansible.builtin.debug:
+        var: _dpdk_validation_details
+
+    - name: Assert DPDK PCI configuration matches inventory
+      ansible.builtin.assert:
+        that:
+          - _dpdk_extra.rc == 0
+          - _dpdk_expected_raw | length == _dpdk_expected | length
+          - _dpdk_allowlist_missing | length == 0
+          - _dpdk_allowlist_unexpected | length == 0
+          - _dpdk_allowlist_duplicates | length == 0
+          - _dpdk_runtime_missing | length == 0
+          - _dpdk_runtime_unexpected | length == 0
+          - _dpdk_runtime_duplicates | length == 0
+          - _dpdk_missing_hardware | length == 0
+        fail_msg: "{{ _dpdk_validation_details | to_nice_json }}"
+
+    - name: Record DPDK PCI allowlist validation success
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "DPDK PCI allowlist on {{ inventory_hostname }}"
+        result_value: "ok"
+        result_comment: "{{ _dpdk_validation_details }}"
+
+  rescue:
+
+    - name: Record DPDK PCI allowlist validation failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "DPDK PCI allowlist on {{ inventory_hostname }}"
+        result_value: "failed"
+        result_comment: >-
+          {{
+            _dpdk_validation_details
+            | default({})
+            | combine({
+                'failure':
+                  ((ansible_failed_result | default({})).msg
+                   | default('DPDK PCI allowlist validation failed'))
+              })
+          }}

@@ -18,10 +18,12 @@ validation:
 ```
 
 The validation can be run independently with:
+```bash
 ansible-playbook \
   -i <inventory> \
   playbooks/validation.yml \
   --tags dpdk_pci_allowlist
+```
 
 # Source of truth
 Expected DPDK PCI devices are derived directly from the deployment inventory.

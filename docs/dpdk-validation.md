@@ -15,6 +15,7 @@ set the run_dpdk_pci_allowlist field to true
 ```yaml
 validation:
   run_dpdk_pci_allowlist: true
+```
 
 The validation can be run independently with:
 ansible-playbook \

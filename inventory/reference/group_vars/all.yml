@@ -132,6 +132,14 @@ validation:
     iperf_port: 5201
     iperf_test_time: 10
 
+  # TEST CASE NAME: DPDK PCI Allowlist
+  # DESCRIPTION: Validates DPDK PCI devices declared in the deployment inventory
+  # against the OVS DPDK EAL allowlist and runtime DPDK interfaces. Detects
+  # missing, unexpected, duplicated and nonexistent PCI devices. Re-running the
+  # validation after a host reboot validates persistence of the allowlist.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_dpdk_pci_allowlist: false
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing

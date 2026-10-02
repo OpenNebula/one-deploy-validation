@@ -1,0 +1,4 @@
+---
+
+- name: Run Allowlist validation
+  ansible.builtin.include_tasks: dpdk-pci-allowlist.yml

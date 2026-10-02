@@ -53,23 +53,27 @@
       when:
         - validation.run_test_vm | d(true)
         - not (_gb_pre | bool)
+
     - role: storage-benchmark
       tags: [storage_benchmark]
       when:
         - validation.run_storage_benchmark | d(true)
         - not (_gb_pre | bool)
+
     - role: gpu-benchmark
       when:
         - validation.run_gpu_benchmark | d(false)
         - not (_gb_pre | bool)
       tags:
         - gpu_benchmark
+
     - role: ldap_auth
       when:
         - validation.run_ldap_auth | d(false)
         - not (_gb_pre | bool)
       tags:
         - ldap_auth
+
     - role: network_validation
       tags: [network_validation]
       when:
@@ -96,6 +100,20 @@
   roles:
     - role: network-benchmark
       when: not (_gb_pre | bool)
+
+# Validate DPDK PCI allowlist configuration on DPDK-enabled hypervisor hosts.
+# The expected PCI devices are derived from the deployment inventory and
+# compared with both the effective OVS DPDK EAL allowlist and runtime
+# DPDK interfaces.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [dpdk_pci_allowlist]
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: dpdk-validation
+      when:
+        - validation.run_dpdk_pci_allowlist | d(false)
+        - not (_gb_pre | bool)
 
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
@@ -294,6 +312,25 @@
           {{ (report_verification_comments | default({}))
              | combine(hostvars[item].verification_comments | default({}) | dict2items
                        | selectattr('key', 'search', 'Network benchmark') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - hostvars[item].verification_result is defined
+
+    - name: Fold node-host DPDK PCI allowlist verification results into the report
+      # The dpdk-validation role records per-node results. The final report is
+      # rendered on localhost from frontend-derived facts, so merge only the
+      # DPDK PCI allowlist result keys from each hypervisor.
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK PCI allowlist') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK PCI allowlist') | items2dict) }}
       loop: "{{ groups[node_group | d('node')] }}"
       loop_control:
         label: "{{ item }}"

@@ -22,6 +22,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | Networking subsystem (per-vNet GW/DNS/external) | [docs/network_validation](./docs/network_validation.md) | `validation.networks_verification` | on | `network_validation` |
 | Storage benchmark (fio in a test VM) | [docs/storage-benchmark](./docs/storage-benchmark.md) | `validation.run_storage_benchmark` | on | `storage_benchmark` |
 | Network benchmark (host-to-host throughput) | [docs/network-benchmark](./docs/network-benchmark.md) | `validation.run_network_benchmark` | on | `network_benchmark` |
+| DPDK PCI allowlist (inventory/runtime/persistence) | [docs/dpdk-validation](./docs/dpdk-validation.md) | `validation.run_dpdk_pci_allowlist` | off | `dpdk_pci_allowlist` |
 | OneFlow smoke test (service lifecycle) | [docs/oneflow_validation](./docs/oneflow_validation.md) | `validation.run_one_flow` | on | `one_flow` |
 | Connectivity matrix (VM-to-VM across vNets) | [docs/conn_matrix](./docs/conn_matrix.md) | `validation.run_conn_matrix` | off | `conn_matrix` |
 | LDAP authentication | [docs/ldap_auth](./docs/ldap_auth.md) | `validation.run_ldap_auth` | off | `ldap_auth` |

@@ -44,8 +44,8 @@ ovs:
   bond:
     bond0:
       ifaces:
-        - vmnic0
-        - vmnic6
+        - eth0
+        - eth2
       set:
         - bond_mode: balance-slb
 

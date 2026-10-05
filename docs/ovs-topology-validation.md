@@ -28,37 +28,37 @@ ansible-playbook \
 
 ## Source of truth
 
-Expected topology is derived directly from the host's deployment inventory.
+Expected topology is derived directly from each host's deployment inventory.
 
 For example:
 
 ```yaml
 ovs:
   br:
-    ovsbr0:
+    br-dpdk0:
       set:
         - datapath_type: netdev
       ports:
-        - bond0
+        - dpdk-bond0
 
   bond:
-    bond0:
+    dpdk-bond0:
       ifaces:
-        - eth0
-        - eth2
+        - dpdk0
+        - dpdk1
       set:
         - bond_mode: balance-slb
 
   iface:
-    eth0:
+    dpdk0:
       set:
         - type: dpdk
-        - options:dpdk-devargs: '0000:19:00.0'
+        - options:dpdk-devargs: '0000:01:00.0'
 
-    eth2:
+    dpdk1:
       set:
         - type: dpdk
-        - options:dpdk-devargs: '0000:5e:00.0'
+        - options:dpdk-devargs: '0000:02:00.0'
 ```
 
 No duplicate topology configuration is required by the validation role.
@@ -82,19 +82,20 @@ For example, with:
 ```yaml
 ovs:
   br:
-    ovsbr0:
+    br-dpdk0:
       ports:
-        - bond0
+        - dpdk-bond0
 ```
 
 a runtime bridge containing both:
 
 ```text
-bond0
-nfhonfedv6-nic0
+dpdk-bond0
+vm-runtime-port0
 ```
 
-is valid. The VM interface is not treated as unexpected topology.
+is valid. The dynamically created VM interface is not treated as unexpected
+topology.
 
 ## Port validation
 
@@ -137,10 +138,10 @@ all members active: false
 while its individual members report:
 
 ```text
-member eth0: enabled
+member dpdk0: enabled
   may_enable: true
 
-member eth2: enabled
+member dpdk1: enabled
   may_enable: true
 ```
 
@@ -167,9 +168,9 @@ For each such interface, the role verifies:
 A healthy DPDK interface typically looks like:
 
 ```text
-name        : eth0
+name        : dpdk0
 type        : dpdk
-options     : {dpdk-devargs="0000:19:00.0"}
+options     : {dpdk-devargs="0000:01:00.0"}
 error       : []
 admin_state : up
 link_state  : up
@@ -251,31 +252,31 @@ one.
 This allows a single validation run to report multiple problems such as:
 
 ```text
-bridge ovsbr0: expected bridge does not exist
+bridge br-dpdk0: expected bridge does not exist
 
-port bond0: expected bridge ovsbr0, got ovsbr1
+port dpdk-bond0: expected bridge br-dpdk0, got br-dpdk1
 
-bond bond0: expected bridge ovsbr0, got ovsbr1
+bond dpdk-bond0: expected bridge br-dpdk0, got br-dpdk1
 
-bond bond0: mode expected balance-slb, got active-backup
+bond dpdk-bond0: mode expected balance-slb, got active-backup
 
-bond bond0: missing members eth2
+bond dpdk-bond0: missing members dpdk1
 
-bond bond0: unexpected members eth3
+bond dpdk-bond0: unexpected members dpdk2
 
-DPDK interface eth0: type expected dpdk, got system
+DPDK interface dpdk0: type expected dpdk, got system
 
-DPDK interface eth0: dpdk-devargs expected 0000:19:00.0, got 0000:19:00.1
+DPDK interface dpdk0: dpdk-devargs expected 0000:01:00.0, got 0000:03:00.0
 
-DPDK interface eth0: expected bridge ovsbr0, got ovsbr1
+DPDK interface dpdk0: expected bridge br-dpdk0, got br-dpdk1
 
-DPDK interface eth0: OVS error <error text>
+DPDK interface dpdk0: OVS error <error text>
 
-DPDK interface eth0: admin_state expected up, got down
+DPDK interface dpdk0: admin_state expected up, got down
 
-DPDK interface eth0: link_state expected up, got down
+DPDK interface dpdk0: link_state expected up, got down
 
-DPDK interface eth0: invalid OpenFlow port -1
+DPDK interface dpdk0: invalid OpenFlow port -1
 ```
 
 ## Result reporting
@@ -289,7 +290,7 @@ OVS topology on <hostname>
 For example:
 
 ```text
-OVS topology on nfhhvmadlb11
+OVS topology on hypervisor01
 ```
 
 A successful validation records:

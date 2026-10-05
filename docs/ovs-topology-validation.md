@@ -50,12 +50,12 @@ ovs:
         - bond_mode: balance-slb
 
   iface:
-    vmnic0:
+    eth0:
       set:
         - type: dpdk
         - options:dpdk-devargs: '0000:19:00.0'
 
-    vmnic6:
+    eth2:
       set:
         - type: dpdk
         - options:dpdk-devargs: '0000:5e:00.0'
@@ -137,10 +137,10 @@ all members active: false
 while its individual members report:
 
 ```text
-member vmnic0: enabled
+member eth0: enabled
   may_enable: true
 
-member vmnic6: enabled
+member eth2: enabled
   may_enable: true
 ```
 
@@ -167,7 +167,7 @@ For each such interface, the role verifies:
 A healthy DPDK interface typically looks like:
 
 ```text
-name        : vmnic0
+name        : eth0
 type        : dpdk
 options     : {dpdk-devargs="0000:19:00.0"}
 error       : []
@@ -259,23 +259,23 @@ bond bond0: expected bridge ovsbr0, got ovsbr1
 
 bond bond0: mode expected balance-slb, got active-backup
 
-bond bond0: missing members vmnic6
+bond bond0: missing members eth2
 
-bond bond0: unexpected members vmnic7
+bond bond0: unexpected members eth3
 
-DPDK interface vmnic0: type expected dpdk, got system
+DPDK interface eth0: type expected dpdk, got system
 
-DPDK interface vmnic0: dpdk-devargs expected 0000:19:00.0, got 0000:19:00.1
+DPDK interface eth0: dpdk-devargs expected 0000:19:00.0, got 0000:19:00.1
 
-DPDK interface vmnic0: expected bridge ovsbr0, got ovsbr1
+DPDK interface eth0: expected bridge ovsbr0, got ovsbr1
 
-DPDK interface vmnic0: OVS error <error text>
+DPDK interface eth0: OVS error <error text>
 
-DPDK interface vmnic0: admin_state expected up, got down
+DPDK interface eth0: admin_state expected up, got down
 
-DPDK interface vmnic0: link_state expected up, got down
+DPDK interface eth0: link_state expected up, got down
 
-DPDK interface vmnic0: invalid OpenFlow port -1
+DPDK interface eth0: invalid OpenFlow port -1
 ```
 
 ## Result reporting

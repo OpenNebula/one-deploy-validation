@@ -115,6 +115,23 @@
         - validation.run_dpdk_pci_allowlist | d(false)
         - not (_gb_pre | bool)
 
+# Validate OVS bridge, bond and DPDK interface topology.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [ovs_topology_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  pre_tasks:
+    - name: Gather facts required by OVS deployment inventory
+      ansible.builtin.setup:
+      tags: [ovs_topology_validation]
+  roles:
+    - role: ovs-topology-validation
+      when:
+        - validation.run_ovs_topology_validation | d(false)
+        - not (_gb_pre | bool)
+
+
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
 # LEADER's oned destabilizes monitoring/flow-server state for minutes —
@@ -336,6 +353,22 @@
         label: "{{ item }}"
       when:
         - hostvars[item].verification_result is defined
+
+    - name: Fold node-host OVS topology verification results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'OVS topology') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'OVS topology') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      when:
+        - hostvars[item].verification_result is defined
+
+
 
     - name: Collect run manifest, sweep results and leftovers from all hosts
       # Audit-trail aggregation for the 'Execution & Cleanup Summary' section.

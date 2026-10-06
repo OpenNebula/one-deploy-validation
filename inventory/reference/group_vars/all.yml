@@ -140,6 +140,14 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_dpdk_pci_allowlist: false
 
+  # TEST CASE NAME: OVS Topology Validation
+  # DESCRIPTION: Validates inventory-defined OVS bridges, ports, bonds and DPDK
+  # interfaces against the running Open vSwitch topology. Checks bridge and port
+  # placement, bond membership and mode, DPDK devargs, interface state, OVS
+  # interface errors and valid OpenFlow port initialization.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_ovs_topology_validation: false
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing

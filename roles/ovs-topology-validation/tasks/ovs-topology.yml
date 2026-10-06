@@ -1,0 +1,941 @@
+---
+- name: Initialize OVS topology validation
+  ansible.builtin.set_fact:
+    _ovs_topology_failures: []
+    _ovs_expected_bridges: {}
+    _ovs_expected_ports: {}
+    _ovs_expected_bonds: {}
+    _ovs_expected_dpdk_interfaces: {}
+    _ovs_bridge_runtime: {}
+    _ovs_port_runtime: {}
+    _ovs_bond_runtime: {}
+    _ovs_dpdk_interface_runtime: {}
+
+- name: Build expected bridge topology
+  ansible.builtin.set_fact:
+    _ovs_expected_bridges: >-
+      {{
+        _ovs_expected_bridges
+        | combine({
+            item.key: {
+              'ports': item.value.get('ports', []) | list,
+              'datapath_type': _bridge_datapath_type
+            }
+          })
+      }}
+  vars:
+    _bridge_datapath_type: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('datapath_type', 'defined')
+        | map(attribute='datapath_type')
+        | first
+        | default('')
+        | string
+      }}
+  loop: >-
+    {{
+      hostvars[inventory_hostname]
+      .get('ovs', {})
+      .get('br', {})
+      | dict2items
+    }}
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Build expected port-to-bridge mapping
+  ansible.builtin.set_fact:
+    _ovs_expected_ports: >-
+      {{
+        _ovs_expected_ports
+        | combine({
+            item.1: item.0.key
+          })
+      }}
+  loop: >-
+    {{
+      query(
+        'subelements',
+        (
+          hostvars[inventory_hostname]
+          .get('ovs', {})
+          .get('br', {})
+          | dict2items
+        ),
+        'value.ports',
+        {'skip_missing': true}
+      )
+    }}
+  loop_control:
+    label: "{{ item.1 }} -> {{ item.0.key }}"
+
+- name: Build expected bond topology
+  ansible.builtin.set_fact:
+    _ovs_expected_bonds: >-
+      {{
+        _ovs_expected_bonds
+        | combine({
+            item.key: {
+              'members': item.value.get('ifaces', []) | list,
+              'bond_mode': _bond_mode,
+              'bridge': _ovs_expected_ports[item.key] | default('')
+            }
+          })
+      }}
+  vars:
+    _bond_mode: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('bond_mode', 'defined')
+        | map(attribute='bond_mode')
+        | first
+        | default('')
+        | string
+      }}
+  loop: >-
+    {{
+      hostvars[inventory_hostname]
+      .get('ovs', {})
+      .get('bond', {})
+      | dict2items
+    }}
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Build expected DPDK interface topology
+  ansible.builtin.set_fact:
+    _ovs_expected_dpdk_interfaces: >-
+      {{
+        _ovs_expected_dpdk_interfaces
+        | combine({
+            item.key: {
+              'type': _iface_type,
+              'dpdk_devargs': _iface_devargs,
+              'bond': _iface_bond,
+              'bridge': _iface_bridge
+            }
+          })
+      }}
+  vars:
+    _iface_type: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('type', 'defined')
+        | map(attribute='type')
+        | first
+        | default('')
+        | string
+      }}
+    _iface_devargs: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('options:dpdk-devargs', 'defined')
+        | map(attribute='options:dpdk-devargs')
+        | first
+        | default('')
+        | string
+      }}
+    _iface_bond: >-
+      {%- set ns = namespace(name='') -%}
+      {%- for bond in _ovs_expected_bonds | dict2items -%}
+        {%- if item.key in bond.value.members -%}
+          {%- set ns.name = bond.key -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.name }}
+    _iface_bridge: >-
+      {{
+        (
+          _ovs_expected_bonds[_iface_bond].bridge
+          if _iface_bond in _ovs_expected_bonds
+          else (_ovs_expected_ports[item.key] | default(''))
+        )
+      }}
+  loop: >-
+    {{
+      hostvars[inventory_hostname]
+      .get('ovs', {})
+      .get('iface', {})
+      | dict2items
+    }}
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _iface_type.startswith('dpdk')
+    - _iface_devargs | length > 0
+
+- name: Show expected OVS topology
+  ansible.builtin.debug:
+    msg:
+      host: "{{ inventory_hostname }}"
+      bridges: "{{ _ovs_expected_bridges }}"
+      ports: "{{ _ovs_expected_ports }}"
+      bonds: "{{ _ovs_expected_bonds }}"
+      dpdk_interfaces: "{{ _ovs_expected_dpdk_interfaces }}"
+
+- name: Skip host without inventory-defined OVS topology
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "OVS topology on {{ inventory_hostname }}"
+    result_value: "skipped — no OVS topology declared in inventory"
+  when:
+    - _ovs_expected_bridges | length == 0
+    - _ovs_expected_ports | length == 0
+    - _ovs_expected_bonds | length == 0
+    - _ovs_expected_dpdk_interfaces | length == 0
+
+- name: Validate OVS runtime topology
+  when: >-
+    (_ovs_expected_bridges | length > 0)
+    or
+    (_ovs_expected_ports | length > 0)
+    or
+    (_ovs_expected_bonds | length > 0)
+    or
+    (_ovs_expected_dpdk_interfaces | length > 0)
+  block:
+
+    - name: Probe expected OVS bridges
+      ansible.builtin.shell:
+        cmd: |
+          BRIDGE="{{ item.key }}"
+
+          if ovs-vsctl br-exists "$BRIDGE" 2>/dev/null; then
+              echo "exists=true"
+
+              DATAPATH_TYPE="$(
+                  ovs-vsctl get Bridge "$BRIDGE" datapath_type 2>/dev/null |
+                  tr -d '"'
+              )"
+              echo "datapath_type=${DATAPATH_TYPE}"
+
+              PORTS="$(
+                  ovs-vsctl list-ports "$BRIDGE" 2>/dev/null |
+                  sort |
+                  paste -sd, -
+              )"
+              echo "ports=${PORTS}"
+          else
+              echo "exists=false"
+          fi
+        executable: /bin/bash
+      register: _ovs_bridge_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ovs_expected_bridges | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Evaluate expected OVS bridges
+      ansible.builtin.set_fact:
+        _ovs_bridge_runtime: >-
+          {{
+            _ovs_bridge_runtime
+            | combine({
+                _name: {
+                  'exists': _exists,
+                  'datapath_type': _actual_datapath_type,
+                  'ports': _actual_ports,
+                  'expected_ports': _expected.ports,
+                  'expected_datapath_type': _expected.datapath_type
+                }
+              })
+          }}
+        _ovs_topology_failures: >-
+          {{
+            _ovs_topology_failures + _failures
+          }}
+      vars:
+        _name: "{{ item.item.key }}"
+        _expected: "{{ _ovs_expected_bridges[_name] }}"
+        _exists_raw: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^exists=(.*)$')
+          }}
+        _exists: >-
+          {{
+            (_exists_raw | first | default('false')) == 'true'
+          }}
+        _datapath_raw: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^datapath_type=(.*)$')
+          }}
+        _actual_datapath_type: >-
+          {{
+            _datapath_raw | first | default('')
+          }}
+        _ports_raw: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^ports=(.*)$')
+          }}
+        _ports_csv: >-
+          {{
+            _ports_raw | first | default('')
+          }}
+        _actual_ports: >-
+          {{
+            []
+            if _ports_csv | length == 0
+            else _ports_csv.split(',')
+          }}
+        _missing_ports: >-
+          {{
+            _expected.ports
+            | difference(_actual_ports)
+            | sort
+          }}
+        _failures: >-
+          {%- set output = [] -%}
+
+          {%- if not _exists -%}
+            {%- set _ = output.append(
+                  'bridge ' ~ _name ~ ': expected bridge does not exist'
+                ) -%}
+          {%- else -%}
+
+            {%- if _missing_ports | length > 0 -%}
+              {%- set _ = output.append(
+                    'bridge ' ~ _name
+                    ~ ': missing expected ports '
+                    ~ (_missing_ports | join(', '))
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _expected.datapath_type | length > 0
+                  and _actual_datapath_type != _expected.datapath_type -%}
+              {%- set _ = output.append(
+                    'bridge ' ~ _name
+                    ~ ': datapath_type expected '
+                    ~ _expected.datapath_type
+                    ~ ', got '
+                    ~ _actual_datapath_type
+                  ) -%}
+            {%- endif -%}
+
+          {%- endif -%}
+
+          {{ output }}
+      loop: "{{ _ovs_bridge_probe.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Probe expected OVS ports
+      ansible.builtin.shell:
+        cmd: |
+          PORT="{{ item.key }}"
+
+          if BRIDGE="$(ovs-vsctl port-to-br "$PORT" 2>/dev/null)"; then
+              echo "exists=true"
+              echo "bridge=${BRIDGE}"
+          else
+              echo "exists=false"
+              echo "bridge="
+          fi
+        executable: /bin/bash
+      register: _ovs_port_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ovs_expected_ports | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Evaluate expected OVS ports
+      ansible.builtin.set_fact:
+        _ovs_port_runtime: >-
+          {{
+            _ovs_port_runtime
+            | combine({
+                _name: {
+                  'exists': _exists,
+                  'bridge': _actual_bridge,
+                  'expected_bridge': _expected_bridge
+                }
+              })
+          }}
+        _ovs_topology_failures: >-
+          {{
+            _ovs_topology_failures + _failures
+          }}
+      vars:
+        _name: "{{ item.item.key }}"
+        _expected_bridge: "{{ _ovs_expected_ports[_name] }}"
+        _exists_raw: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^exists=(.*)$')
+          }}
+        _exists: >-
+          {{
+            (_exists_raw | first | default('false')) == 'true'
+          }}
+        _bridge_raw: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^bridge=(.*)$')
+          }}
+        _actual_bridge: >-
+          {{
+            _bridge_raw | first | default('')
+          }}
+        _failures: >-
+          {%- set output = [] -%}
+
+          {%- if not _exists -%}
+            {%- set _ = output.append(
+                  'port ' ~ _name ~ ': expected port does not exist'
+                ) -%}
+
+          {%- elif _expected_bridge | length > 0
+                and _actual_bridge != _expected_bridge -%}
+            {%- set _ = output.append(
+                  'port ' ~ _name
+                  ~ ': expected bridge '
+                  ~ _expected_bridge
+                  ~ ', got '
+                  ~ _actual_bridge
+                ) -%}
+          {%- endif -%}
+
+          {{ output }}
+      loop: "{{ _ovs_port_probe.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Probe expected OVS bonds
+      ansible.builtin.shell:
+        cmd: |
+          BOND="{{ item.key }}"
+
+          if BRIDGE="$(ovs-vsctl port-to-br "$BOND" 2>/dev/null)"; then
+              echo "exists=true"
+              echo "bridge=${BRIDGE}"
+          else
+              echo "exists=false"
+              echo "bridge="
+              exit 0
+          fi
+
+          if BOND_SHOW="$(ovs-appctl bond/show "$BOND" 2>/dev/null)"; then
+              echo "bond_runtime=true"
+
+              printf '%s\n' "$BOND_SHOW" |
+                  sed -n 's/^bond_mode: /mode=/p'
+
+              printf '%s\n' "$BOND_SHOW" |
+                  sed -n 's/^all members active: /all_members_active=/p'
+
+              printf '%s\n' "$BOND_SHOW" |
+                  sed -n 's/^lacp_status: /lacp_status=/p'
+
+              printf '%s\n' "$BOND_SHOW" |
+                  sed -n 's/^member \([^:]*\): \(.*\)$/member=\1|\2/p'
+          else
+              echo "bond_runtime=false"
+          fi
+        executable: /bin/bash
+      register: _ovs_bond_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ovs_expected_bonds | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Evaluate expected OVS bonds
+      ansible.builtin.set_fact:
+        _ovs_bond_runtime: >-
+          {{
+            _ovs_bond_runtime
+            | combine({
+                _name: {
+                  'exists': _exists,
+                  'bond_runtime': _bond_runtime,
+                  'bridge': _actual_bridge,
+                  'expected_bridge': _expected.bridge,
+                  'mode': _actual_mode,
+                  'expected_mode': _expected.bond_mode,
+                  'members': _actual_members,
+                  'expected_members': _expected.members,
+                  'member_states': _member_states,
+                  'all_members_active': _all_members_active,
+                  'lacp_status': _lacp_status
+                }
+              })
+          }}
+        _ovs_topology_failures: >-
+          {{
+            _ovs_topology_failures + _failures
+          }}
+      vars:
+        _name: "{{ item.item.key }}"
+        _expected: "{{ _ovs_expected_bonds[_name] }}"
+        _exists_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^exists=(.*)$')
+          }}
+        _exists: >-
+          {{
+            (_exists_matches | first | default('false')) == 'true'
+          }}
+        _runtime_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^bond_runtime=(.*)$')
+          }}
+        _bond_runtime: >-
+          {{
+            (_runtime_matches | first | default('false')) == 'true'
+          }}
+        _bridge_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^bridge=(.*)$')
+          }}
+        _actual_bridge: >-
+          {{
+            _bridge_matches | first | default('')
+          }}
+        _mode_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^mode=(.*)$')
+          }}
+        _actual_mode: >-
+          {{
+            _mode_matches | first | default('')
+          }}
+        _member_pairs: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^member=([^|]+)[|](.*)$')
+          }}
+        _actual_members: >-
+          {{
+            _member_pairs
+            | map('first')
+            | list
+            | sort
+          }}
+        _member_states: >-
+          {%- set output = {} -%}
+          {%- for pair in _member_pairs -%}
+            {%- set _ = output.update({
+                  pair.0: pair.1
+                }) -%}
+          {%- endfor -%}
+          {{ output }}
+        _all_active_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^all_members_active=(.*)$')
+          }}
+        _all_members_active: >-
+          {{
+            _all_active_matches | first | default('')
+          }}
+        _lacp_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^lacp_status=(.*)$')
+          }}
+        _lacp_status: >-
+          {{
+            _lacp_matches | first | default('')
+          }}
+        _missing_members: >-
+          {{
+            _expected.members
+            | difference(_actual_members)
+            | sort
+          }}
+        _unexpected_members: >-
+          {{
+            _actual_members
+            | difference(_expected.members)
+            | sort
+          }}
+        _failures: >-
+          {%- set output = [] -%}
+
+          {%- if not _exists -%}
+            {%- set _ = output.append(
+                  'bond ' ~ _name ~ ': expected bond port does not exist'
+                ) -%}
+
+          {%- elif not _bond_runtime -%}
+            {%- set _ = output.append(
+                  'bond ' ~ _name
+                  ~ ': port exists but OVS does not report it as a runtime bond'
+                ) -%}
+
+          {%- else -%}
+
+            {%- if _expected.bridge | length > 0
+                  and _actual_bridge != _expected.bridge -%}
+              {%- set _ = output.append(
+                    'bond ' ~ _name
+                    ~ ': expected bridge '
+                    ~ _expected.bridge
+                    ~ ', got '
+                    ~ _actual_bridge
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _expected.bond_mode | length > 0
+                  and _actual_mode != _expected.bond_mode -%}
+              {%- set _ = output.append(
+                    'bond ' ~ _name
+                    ~ ': mode expected '
+                    ~ _expected.bond_mode
+                    ~ ', got '
+                    ~ _actual_mode
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _missing_members | length > 0 -%}
+              {%- set _ = output.append(
+                    'bond ' ~ _name
+                    ~ ': missing members '
+                    ~ (_missing_members | join(', '))
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _unexpected_members | length > 0 -%}
+              {%- set _ = output.append(
+                    'bond ' ~ _name
+                    ~ ': unexpected members '
+                    ~ (_unexpected_members | join(', '))
+                  ) -%}
+            {%- endif -%}
+
+            {%- for member in _expected.members -%}
+              {%- if member in _member_states
+                    and _member_states[member] != 'enabled' -%}
+                {%- set _ = output.append(
+                      'bond ' ~ _name
+                      ~ ': member '
+                      ~ member
+                      ~ ' is '
+                      ~ _member_states[member]
+                    ) -%}
+              {%- endif -%}
+            {%- endfor -%}
+
+          {%- endif -%}
+
+          {{ output }}
+      loop: "{{ _ovs_bond_probe.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Probe expected DPDK interfaces
+      ansible.builtin.shell:
+        cmd: |
+          IFACE="{{ item.key }}"
+
+          if INTERFACE_DATA="$(
+              ovs-vsctl \
+                  --columns=name,type,options,error,admin_state,link_state,ofport \
+                  list Interface "$IFACE" 2>/dev/null
+          )"; then
+              echo "exists=true"
+
+              BRIDGE="$(
+                  ovs-vsctl iface-to-br "$IFACE" 2>/dev/null || true
+              )"
+              echo "bridge=${BRIDGE}"
+
+              printf '%s\n' "$INTERFACE_DATA"
+          else
+              echo "exists=false"
+              echo "bridge="
+          fi
+        executable: /bin/bash
+      register: _ovs_dpdk_interface_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ovs_expected_dpdk_interfaces | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Evaluate expected DPDK interfaces
+      ansible.builtin.set_fact:
+        _ovs_dpdk_interface_runtime: >-
+          {{
+            _ovs_dpdk_interface_runtime
+            | combine({
+                _name: {
+                  'exists': _exists,
+                  'bridge': _actual_bridge,
+                  'expected_bridge': _expected.bridge,
+                  'bond': _expected.bond,
+                  'type': _actual_type,
+                  'expected_type': _expected.type,
+                  'dpdk_devargs': _actual_devargs,
+                  'expected_dpdk_devargs': _expected.dpdk_devargs,
+                  'error': _error,
+                  'admin_state': _admin_state,
+                  'link_state': _link_state,
+                  'ofport': _ofport
+                }
+              })
+          }}
+        _ovs_topology_failures: >-
+          {{
+            _ovs_topology_failures + _failures
+          }}
+      vars:
+        _name: "{{ item.item.key }}"
+        _expected: "{{ _ovs_expected_dpdk_interfaces[_name] }}"
+        _exists_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^exists=(.*)$')
+          }}
+        _exists: >-
+          {{
+            (_exists_matches | first | default('false')) == 'true'
+          }}
+        _bridge_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^bridge=(.*)$')
+          }}
+        _actual_bridge: >-
+          {{
+            _bridge_matches | first | default('')
+          }}
+        _type_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^type[ ]*:[ ]*(.*)$')
+          }}
+        _actual_type: >-
+          {{
+            (_type_matches | first | default(''))
+            | trim
+            | trim('"')
+          }}
+        _options_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^options[ ]*:[ ]*(.*)$')
+          }}
+        _options: >-
+          {{
+            _options_matches | first | default('')
+          }}
+        _quoted_devargs: >-
+          {{
+            _options
+            | regex_findall('dpdk-devargs="([^"]*)"')
+          }}
+        _bare_devargs: >-
+          {{
+            _options
+            | regex_findall('dpdk-devargs=([^,}]+)')
+          }}
+        _actual_devargs: >-
+          {{
+            (
+              _quoted_devargs | first
+              if _quoted_devargs | length > 0
+              else _bare_devargs | first | default('')
+            )
+            | trim
+          }}
+        _error_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^error[ ]*:[ ]*(.*)$')
+          }}
+        _error: >-
+          {{
+            _error_matches | first | default('')
+          }}
+        _admin_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^admin_state[ ]*:[ ]*(.*)$')
+          }}
+        _admin_state: >-
+          {{
+            (_admin_matches | first | default(''))
+            | trim
+            | trim('"')
+          }}
+        _link_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^link_state[ ]*:[ ]*(.*)$')
+          }}
+        _link_state: >-
+          {{
+            (_link_matches | first | default(''))
+            | trim
+            | trim('"')
+          }}
+        _ofport_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^ofport[ ]*:[ ]*(-?[0-9]+)$')
+          }}
+        _ofport: >-
+          {{
+            _ofport_matches | first | default('0')
+          }}
+        _healthy_error_values:
+          - ""
+          - "[]"
+          - '""'
+        _failures: >-
+          {%- set output = [] -%}
+
+          {%- if not _exists -%}
+            {%- set _ = output.append(
+                  'DPDK interface '
+                  ~ _name
+                  ~ ': expected interface does not exist'
+                ) -%}
+
+          {%- else -%}
+
+            {%- if _actual_type != _expected.type -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': type expected '
+                    ~ _expected.type
+                    ~ ', got '
+                    ~ _actual_type
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _actual_devargs != _expected.dpdk_devargs -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': dpdk-devargs expected '
+                    ~ _expected.dpdk_devargs
+                    ~ ', got '
+                    ~ _actual_devargs
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _expected.bridge | length > 0
+                  and _actual_bridge != _expected.bridge -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': expected bridge '
+                    ~ _expected.bridge
+                    ~ ', got '
+                    ~ _actual_bridge
+                  ) -%}
+            {%- endif -%}
+
+            {%- if (_error | string) not in _healthy_error_values -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': OVS error '
+                    ~ (_error | string)
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _admin_state != 'up' -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': admin_state expected up, got '
+                    ~ _admin_state
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _link_state != 'up' -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': link_state expected up, got '
+                    ~ _link_state
+                  ) -%}
+            {%- endif -%}
+
+            {%- if (_ofport | int) <= 0 -%}
+              {%- set _ = output.append(
+                    'DPDK interface '
+                    ~ _name
+                    ~ ': invalid OpenFlow port '
+                    ~ (_ofport | string)
+                  ) -%}
+            {%- endif -%}
+
+          {%- endif -%}
+
+          {{ output }}
+      loop: "{{ _ovs_dpdk_interface_probe.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Build OVS topology validation details
+      ansible.builtin.set_fact:
+        _ovs_topology_validation_details:
+          expected:
+            bridges: "{{ _ovs_expected_bridges }}"
+            ports: "{{ _ovs_expected_ports }}"
+            bonds: "{{ _ovs_expected_bonds }}"
+            dpdk_interfaces: "{{ _ovs_expected_dpdk_interfaces }}"
+          runtime:
+            bridges: "{{ _ovs_bridge_runtime }}"
+            ports: "{{ _ovs_port_runtime }}"
+            bonds: "{{ _ovs_bond_runtime }}"
+            dpdk_interfaces: "{{ _ovs_dpdk_interface_runtime }}"
+          failures: "{{ _ovs_topology_failures }}"
+
+    - name: Show OVS topology validation details
+      ansible.builtin.debug:
+        var: _ovs_topology_validation_details
+
+    - name: Assert OVS topology matches deployment inventory
+      ansible.builtin.assert:
+        that:
+          - _ovs_topology_failures | length == 0
+        fail_msg: >-
+          {{
+            _ovs_topology_validation_details
+            | to_nice_json
+          }}
+
+    - name: Record OVS topology validation success
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "OVS topology on {{ inventory_hostname }}"
+        result_value: "ok"
+        result_comment: "{{ _ovs_topology_validation_details }}"
+
+  rescue:
+
+    - name: Record OVS topology validation failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "OVS topology on {{ inventory_hostname }}"
+        result_value: "failed"
+        result_comment: >-
+          {{
+            _ovs_topology_validation_details
+            | default({})
+            | combine({
+                'failure':
+                  ((ansible_failed_result | default({})).msg
+                   | default('OVS topology validation failed'))
+              })
+          }}

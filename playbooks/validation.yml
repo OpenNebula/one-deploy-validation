@@ -131,6 +131,22 @@
         - validation.run_ovs_topology_validation | d(false)
         - not (_gb_pre | bool)
 
+# Validate DPDK interface initialization and runtime datapath attachment.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [dpdk_interface_init_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  pre_tasks:
+    - name: Gather facts required by DPDK interface initialization validation
+      ansible.builtin.setup:
+      tags: [dpdk_interface_init_validation]
+  roles:
+    - role: dpdk-interface-init-validation
+      when:
+        - validation.run_dpdk_interface_init_validation | d(false)
+        - not (_gb_pre | bool)
+
 
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
@@ -368,6 +384,19 @@
       when:
         - hostvars[item].verification_result is defined
 
+    - name: Fold node-host DPDK interface initialization results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK interface initialization') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK interface initialization') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      when:
+        - hostvars[item].verification_result is defined
 
 
     - name: Collect run manifest, sweep results and leftovers from all hosts

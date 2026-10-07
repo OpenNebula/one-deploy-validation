@@ -866,6 +866,8 @@
      'prefixes': ['DPDK PCI allowlist']},
     {'label': 'OVS topology',        'flag': validation_vars.run_ovs_topology_validation | default(false),
      'prefixes': ['OVS topology']},
+    {'label': 'DPDK interface init', 'flag': validation_vars.run_dpdk_interface_init_validation | default(false),
+     'prefixes': ['DPDK interface initialization']},
     {'label': 'Core services',       'flag': validation_vars.run_core_services | default(true),
      'prefixes': ['Core services']},
     {'label': 'OneFlow smoke test',  'flag': validation_vars.run_one_flow | default(false),

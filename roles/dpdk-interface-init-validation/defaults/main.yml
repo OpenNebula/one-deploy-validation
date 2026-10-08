@@ -1,0 +1,12 @@
+---
+# Number of runtime observations before declaring a DPDK interface unhealthy.
+# Healthy interfaces return immediately; the delay is only incurred while an
+# interface is still converging or has actually failed.
+dpdk_interface_init_retries: 6
+dpdk_interface_init_delay: 5
+
+# Number of interface-specific log errors retained in the validation details.
+dpdk_interface_init_log_tail: 5
+
+# Optional OVS file log inspected in addition to the systemd journal.
+dpdk_interface_init_ovs_log: /var/log/openvswitch/ovs-vswitchd.log

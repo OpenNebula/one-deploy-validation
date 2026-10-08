@@ -24,6 +24,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | Network benchmark (host-to-host throughput) | [docs/network-benchmark](./docs/network-benchmark.md) | `validation.run_network_benchmark` | on | `network_benchmark` |
 | DPDK PCI allowlist (inventory/runtime/persistence) | [docs/dpdk-validation](./docs/dpdk-validation.md) | `validation.run_dpdk_pci_allowlist` | off | `dpdk_pci_allowlist` |
 | OVS topology (bridges/bonds/DPDK interfaces) | [docs/ovs-topology-validation](./docs/ovs-topology-validation.md) | `validation.run_ovs_topology_validation` | off | `ovs_topology_validation` |
+| DPDK interface initialization and attachment | [docs/dpdk-interface-init-validation](./docs/dpdk-interface-init-validation.md) | `validation.run_dpdk_interface_init_validation` | off | `dpdk_interface_init_validation` |
 | OneFlow smoke test (service lifecycle) | [docs/oneflow_validation](./docs/oneflow_validation.md) | `validation.run_one_flow` | on | `one_flow` |
 | Connectivity matrix (VM-to-VM across vNets) | [docs/conn_matrix](./docs/conn_matrix.md) | `validation.run_conn_matrix` | off | `conn_matrix` |
 | LDAP authentication | [docs/ldap_auth](./docs/ldap_auth.md) | `validation.run_ldap_auth` | off | `ldap_auth` |

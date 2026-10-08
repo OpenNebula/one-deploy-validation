@@ -1,0 +1,943 @@
+---
+- name: Initialize DPDK interface initialization validation
+  ansible.builtin.set_fact:
+    _dpdk_init_expected: {}
+    _dpdk_init_runtime: {}
+    _dpdk_init_failures: []
+
+- name: Build expected DPDK interface list
+  ansible.builtin.set_fact:
+    _dpdk_init_expected: >-
+      {{
+        _dpdk_init_expected
+        | combine({
+            item.key: {
+              'type': _iface_type,
+              'dpdk_devargs': _iface_devargs
+            }
+          })
+      }}
+  vars:
+    _iface_type: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('type', 'defined')
+        | map(attribute='type')
+        | first
+        | default('')
+        | string
+      }}
+    _iface_devargs: >-
+      {{
+        item.value.get('set', [])
+        | selectattr('options:dpdk-devargs', 'defined')
+        | map(attribute='options:dpdk-devargs')
+        | first
+        | default('')
+        | string
+      }}
+  loop: >-
+    {{
+      hostvars[inventory_hostname]
+      .get('ovs', {})
+      .get('iface', {})
+      | dict2items
+    }}
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _iface_type.startswith('dpdk')
+    - _iface_devargs | length > 0
+
+- name: Show expected DPDK interfaces
+  ansible.builtin.debug:
+    var: _dpdk_init_expected
+
+- name: Record skipped result when no DPDK interfaces are configured
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "DPDK interface initialization on {{ inventory_hostname }}"
+    result_value: "skipped — no inventory-defined DPDK interfaces"
+  when:
+    - _dpdk_init_expected | length == 0
+
+- name: Validate DPDK interface initialization
+  when:
+    - _dpdk_init_expected | length > 0
+  block:
+
+    - name: Select platform OVS service
+      ansible.builtin.set_fact:
+        _dpdk_init_ovs_service: >-
+          {{
+            'openvswitch-switch.service'
+            if ansible_os_family == 'Debian'
+            else 'openvswitch.service'
+          }}
+
+    - name: Collect OVS service context
+      ansible.builtin.shell:
+        cmd: |
+          OVS_SERVICE="{{ _dpdk_init_ovs_service }}"
+
+          for SERVICE in \
+              "$OVS_SERVICE" \
+              ovs-vswitchd.service \
+              opennebula-ovs.service
+          do
+              ACTIVE="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+
+              RESULT="$(
+                  systemctl show "$SERVICE" \
+                      -p Result \
+                      --value \
+                      2>/dev/null || true
+              )"
+
+              START="$(
+                  systemctl show "$SERVICE" \
+                      -p ExecMainStartTimestamp \
+                      --value \
+                      2>/dev/null || true
+              )"
+
+              echo "${SERVICE}|active=${ACTIVE}|result=${RESULT}|start=${START}"
+          done
+        executable: /bin/bash
+      register: _dpdk_init_service_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Collect global DPDK startup error context
+      ansible.builtin.shell:
+        cmd: |
+          OVS_SERVICE="{{ _dpdk_init_ovs_service }}"
+
+          JOURNAL="$(
+              journalctl \
+                  -b \
+                  -u "$OVS_SERVICE" \
+                  -u ovs-vswitchd.service \
+                  -u opennebula-ovs.service \
+                  --no-pager \
+                  -o short-iso \
+                  2>/dev/null || true
+          )"
+
+          ERRORS="$(
+              printf '%s\n' "$JOURNAL" |
+              grep -Ei \
+                  'hugepage|cannot init.*EAL|failed to init.*EAL|failed to initialize.*DPDK|DPDK.*initialization.*fail|cannot allocate.*(memory|huge)|no available hugepages' \
+                  || true
+          )"
+
+          ERROR_COUNT="$(
+              printf '%s\n' "$ERRORS" |
+              sed '/^[[:space:]]*$/d' |
+              wc -l
+          )"
+
+          LAST_ERROR="$(
+              printf '%s\n' "$ERRORS" |
+              tail -n 1
+          )"
+
+          echo "global_error_count=${ERROR_COUNT}"
+          echo "global_last_error=${LAST_ERROR}"
+        executable: /bin/bash
+      register: _dpdk_init_global_log_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Probe DPDK interface runtime and initialization history
+      ansible.builtin.shell:
+        cmd: |
+          IFACE="{{ item.key }}"
+          EXPECTED_TYPE="{{ item.value.type }}"
+          EXPECTED_DEVARGS="{{ item.value.dpdk_devargs }}"
+          RETRIES="{{ dpdk_interface_init_retries | int }}"
+          DELAY="{{ dpdk_interface_init_delay | int }}"
+          LOG_TAIL="{{ dpdk_interface_init_log_tail | int }}"
+          OVS_SERVICE="{{ _dpdk_init_ovs_service }}"
+          OVS_LOG="{{ dpdk_interface_init_ovs_log }}"
+
+          ATTEMPT=0
+          RUNTIME_HEALTHY=false
+
+          DPDK_INITIALIZED=false
+          EXISTS=false
+          TYPE=""
+          ACTUAL_DEVARGS=""
+          ERROR=""
+          ADMIN_STATE=""
+          LINK_STATE=""
+          OFPORT="0"
+          STATUS=""
+          DPIF_ATTACHED=false
+          DPIF_DEVARGS_MATCH=false
+          DPIF_LINE=""
+
+          while (( ATTEMPT < RETRIES )); do
+              ATTEMPT=$((ATTEMPT + 1))
+
+              DPDK_INITIALIZED="$(
+                  ovs-vsctl get Open_vSwitch . dpdk_initialized \
+                      2>/dev/null |
+                  tr -d '"' || true
+              )"
+
+              EXISTS=false
+              TYPE=""
+              ACTUAL_DEVARGS=""
+              ERROR=""
+              ADMIN_STATE=""
+              LINK_STATE=""
+              OFPORT="0"
+              STATUS=""
+
+              if ovs-vsctl get Interface "$IFACE" name \
+                  >/dev/null 2>&1
+              then
+                  EXISTS=true
+
+                  TYPE="$(
+                      ovs-vsctl get Interface "$IFACE" type \
+                          2>/dev/null |
+                      tr -d '"' || true
+                  )"
+
+                  ACTUAL_DEVARGS="$(
+                      ovs-vsctl get Interface "$IFACE" \
+                          options:dpdk-devargs \
+                          2>/dev/null |
+                      tr -d '"' || true
+                  )"
+
+                  ERROR="$(
+                      ovs-vsctl get Interface "$IFACE" error \
+                          2>/dev/null |
+                      tr '\n' ' ' |
+                      sed 's/[[:space:]]*$//' || true
+                  )"
+
+                  ADMIN_STATE="$(
+                      ovs-vsctl get Interface "$IFACE" admin_state \
+                          2>/dev/null |
+                      tr -d '"' || true
+                  )"
+
+                  LINK_STATE="$(
+                      ovs-vsctl get Interface "$IFACE" link_state \
+                          2>/dev/null |
+                      tr -d '"' || true
+                  )"
+
+                  OFPORT="$(
+                      ovs-vsctl get Interface "$IFACE" ofport \
+                          2>/dev/null |
+                      tr -d '"' || true
+                  )"
+
+                  STATUS="$(
+                      ovs-vsctl get Interface "$IFACE" status \
+                          2>/dev/null |
+                      tr '\n' ' ' |
+                      sed 's/[[:space:]]*$//' || true
+                  )"
+              fi
+
+              DPIF_LINE="$(
+                  ovs-appctl dpif/show 2>/dev/null |
+                  awk -v iface="$IFACE" \
+                      '$1 == iface { print; exit }'
+              )"
+
+              DPIF_ATTACHED=false
+              DPIF_DEVARGS_MATCH=false
+
+              if [[ -n "$DPIF_LINE" ]] &&
+                 [[ "$DPIF_LINE" == *"(dpdk:"* ]]
+              then
+                  DPIF_ATTACHED=true
+              fi
+
+              if [[ "$DPIF_LINE" == *"dpdk-devargs=${EXPECTED_DEVARGS}"* ]]
+              then
+                  DPIF_DEVARGS_MATCH=true
+              fi
+
+              ERROR_OK=false
+
+              case "$ERROR" in
+                  ""|"[]"|"\"\"")
+                      ERROR_OK=true
+                      ;;
+              esac
+
+              OFPORT_OK=false
+
+              if [[ "$OFPORT" =~ ^[0-9]+$ ]] &&
+                 (( OFPORT > 0 ))
+              then
+                  OFPORT_OK=true
+              fi
+
+              if [[ "$DPDK_INITIALIZED" == "true" ]] &&
+                 [[ "$EXISTS" == "true" ]] &&
+                 [[ "$TYPE" == "$EXPECTED_TYPE" ]] &&
+                 [[ "$ACTUAL_DEVARGS" == "$EXPECTED_DEVARGS" ]] &&
+                 [[ "$ERROR_OK" == "true" ]] &&
+                 [[ "$OFPORT_OK" == "true" ]] &&
+                 [[ "$DPIF_ATTACHED" == "true" ]] &&
+                 [[ "$DPIF_DEVARGS_MATCH" == "true" ]]
+              then
+                  RUNTIME_HEALTHY=true
+                  break
+              fi
+
+              if (( ATTEMPT < RETRIES )); then
+                  sleep "$DELAY"
+              fi
+          done
+
+          JOURNAL="$(
+              journalctl \
+                  -b \
+                  -u "$OVS_SERVICE" \
+                  -u ovs-vswitchd.service \
+                  -u opennebula-ovs.service \
+                  --no-pager \
+                  -o short-iso \
+                  2>/dev/null || true
+          )"
+
+          RELEVANT_JOURNAL="$(
+              printf '%s\n' "$JOURNAL" |
+              awk \
+                  -v iface="$IFACE" \
+                  -v devargs="$EXPECTED_DEVARGS" \
+                  '
+                  index($0, iface) || index($0, devargs) {
+                      print
+                  }
+                  '
+          )"
+
+          JOURNAL_ERRORS="$(
+              printf '%s\n' "$RELEVANT_JOURNAL" |
+              grep -Ei \
+                  'Driver cannot attach the device|Failed to attach device|Error attaching device|could not set configuration|Failed to bind PCI device|Failed to add port|already in use|invalid.*devargs|cannot allocate.*(memory|huge)|hugepage' \
+                  || true
+          )"
+
+          JOURNAL_SUCCESS="$(
+              printf '%s\n' "$RELEVANT_JOURNAL" |
+              grep -F \
+                  "Device '${EXPECTED_DEVARGS}' attached to DPDK" \
+                  || true
+          )"
+
+          JOURNAL_ERROR_COUNT="$(
+              printf '%s\n' "$JOURNAL_ERRORS" |
+              sed '/^[[:space:]]*$/d' |
+              wc -l
+          )"
+
+          JOURNAL_SUCCESS_COUNT="$(
+              printf '%s\n' "$JOURNAL_SUCCESS" |
+              sed '/^[[:space:]]*$/d' |
+              wc -l
+          )"
+
+          LAST_JOURNAL_ERROR="$(
+              printf '%s\n' "$JOURNAL_ERRORS" |
+              tail -n 1
+          )"
+
+          LAST_JOURNAL_SUCCESS="$(
+              printf '%s\n' "$JOURNAL_SUCCESS" |
+              tail -n 1
+          )"
+
+          LAST_ERROR_INDEX="$(
+              printf '%s\n' "$RELEVANT_JOURNAL" |
+              nl -ba |
+              grep -Ei \
+                  'Driver cannot attach the device|Failed to attach device|Error attaching device|could not set configuration|Failed to bind PCI device|Failed to add port|already in use|invalid.*devargs|cannot allocate.*(memory|huge)|hugepage' |
+              tail -n 1 |
+              awk '{ print $1 }'
+          )"
+
+          LAST_SUCCESS_INDEX="$(
+              printf '%s\n' "$RELEVANT_JOURNAL" |
+              nl -ba |
+              grep -F \
+                  "Device '${EXPECTED_DEVARGS}' attached to DPDK" |
+              tail -n 1 |
+              awk '{ print $1 }'
+          )"
+
+          ERRORS_RECOVERED=false
+
+          if [[ -n "$LAST_ERROR_INDEX" ]] &&
+             [[ -n "$LAST_SUCCESS_INDEX" ]] &&
+             (( LAST_SUCCESS_INDEX > LAST_ERROR_INDEX ))
+          then
+              ERRORS_RECOVERED=true
+          fi
+
+          RECENT_JOURNAL_ERRORS="$(
+              printf '%s\n' "$JOURNAL_ERRORS" |
+              tail -n "$LOG_TAIL" |
+              paste -sd ';' -
+          )"
+
+          FILE_ERROR_COUNT=0
+          FILE_LAST_ERROR=""
+          FILE_RECENT_ERRORS=""
+
+          if [[ -r "$OVS_LOG" ]]; then
+              FILE_RELEVANT="$(
+                  tail -n 5000 "$OVS_LOG" |
+                  awk \
+                      -v iface="$IFACE" \
+                      -v devargs="$EXPECTED_DEVARGS" \
+                      '
+                      index($0, iface) || index($0, devargs) {
+                          print
+                      }
+                      '
+              )"
+
+              FILE_ERRORS="$(
+                  printf '%s\n' "$FILE_RELEVANT" |
+                  grep -Ei \
+                      'Driver cannot attach the device|Failed to attach device|Error attaching device|could not set configuration|Failed to bind PCI device|Failed to add port|already in use|invalid.*devargs|cannot allocate.*(memory|huge)|hugepage' \
+                      || true
+              )"
+
+              FILE_ERROR_COUNT="$(
+                  printf '%s\n' "$FILE_ERRORS" |
+                  sed '/^[[:space:]]*$/d' |
+                  wc -l
+              )"
+
+              FILE_LAST_ERROR="$(
+                  printf '%s\n' "$FILE_ERRORS" |
+                  tail -n 1
+              )"
+
+              FILE_RECENT_ERRORS="$(
+                  printf '%s\n' "$FILE_ERRORS" |
+                  tail -n "$LOG_TAIL" |
+                  paste -sd ';' -
+              )"
+          fi
+
+          echo "attempts=${ATTEMPT}"
+          echo "runtime_healthy=${RUNTIME_HEALTHY}"
+          echo "dpdk_initialized=${DPDK_INITIALIZED}"
+          echo "exists=${EXISTS}"
+          echo "type=${TYPE}"
+          echo "actual_devargs=${ACTUAL_DEVARGS}"
+          echo "error=${ERROR}"
+          echo "admin_state=${ADMIN_STATE}"
+          echo "link_state=${LINK_STATE}"
+          echo "ofport=${OFPORT}"
+          echo "status=${STATUS}"
+          echo "dpif_attached=${DPIF_ATTACHED}"
+          echo "dpif_devargs_match=${DPIF_DEVARGS_MATCH}"
+          echo "dpif_line=${DPIF_LINE}"
+          echo "journal_error_count=${JOURNAL_ERROR_COUNT}"
+          echo "journal_success_count=${JOURNAL_SUCCESS_COUNT}"
+          echo "journal_errors_recovered=${ERRORS_RECOVERED}"
+          echo "journal_last_error=${LAST_JOURNAL_ERROR}"
+          echo "journal_last_success=${LAST_JOURNAL_SUCCESS}"
+          echo "journal_recent_errors=${RECENT_JOURNAL_ERRORS}"
+          echo "file_error_count=${FILE_ERROR_COUNT}"
+          echo "file_last_error=${FILE_LAST_ERROR}"
+          echo "file_recent_errors=${FILE_RECENT_ERRORS}"
+        executable: /bin/bash
+      register: _dpdk_init_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ _dpdk_init_expected | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Evaluate DPDK interface initialization
+      ansible.builtin.set_fact:
+        _dpdk_init_runtime: >-
+          {{
+            _dpdk_init_runtime
+            | combine({
+                _name: {
+                  'result': _result,
+                  'expected_type': _expected.type,
+                  'expected_dpdk_devargs': _expected.dpdk_devargs,
+                  'attempts': _attempts,
+                  'runtime_healthy': _runtime_healthy,
+                  'dpdk_initialized': _dpdk_initialized,
+                  'exists': _exists,
+                  'type': _actual_type,
+                  'dpdk_devargs': _actual_devargs,
+                  'error': _error,
+                  'admin_state': _admin_state,
+                  'link_state': _link_state,
+                  'ofport': _ofport,
+                  'status': _status,
+                  'dpif_attached': _dpif_attached,
+                  'dpif_devargs_match': _dpif_devargs_match,
+                  'dpif_line': _dpif_line,
+                  'log_classification': _log_classification,
+                  'journal_error_count': _journal_error_count,
+                  'journal_success_count': _journal_success_count,
+                  'journal_errors_recovered': _journal_errors_recovered,
+                  'journal_last_error': _journal_last_error,
+                  'journal_last_success': _journal_last_success,
+                  'journal_recent_errors': _journal_recent_errors,
+                  'file_error_count': _file_error_count,
+                  'file_last_error': _file_last_error,
+                  'file_recent_errors': _file_recent_errors,
+                  'failures': _failures
+                }
+              })
+          }}
+        _dpdk_init_failures: >-
+          {{
+            _dpdk_init_failures
+            + (
+                [_name ~ ': ' ~ (_failures | join('; '))]
+                if _failures | length > 0
+                else []
+              )
+          }}
+      vars:
+        _name: "{{ item.item.key }}"
+        _expected: "{{ _dpdk_init_expected[_name] }}"
+
+        _attempts_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^attempts=(.*)$')
+          }}
+        _attempts: >-
+          {{
+            _attempts_matches
+            | first
+            | default('0')
+            | int
+          }}
+
+        _runtime_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^runtime_healthy=(.*)$')
+          }}
+        _runtime_healthy: >-
+          {{
+            (_runtime_matches | first | default('false')) == 'true'
+          }}
+
+        _dpdk_initialized_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^dpdk_initialized=(.*)$')
+          }}
+        _dpdk_initialized: >-
+          {{
+            (_dpdk_initialized_matches | first | default('false')) == 'true'
+          }}
+
+        _exists_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^exists=(.*)$')
+          }}
+        _exists: >-
+          {{
+            (_exists_matches | first | default('false')) == 'true'
+          }}
+
+        _type_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^type=(.*)$')
+          }}
+        _actual_type: >-
+          {{
+            _type_matches
+            | first
+            | default('')
+          }}
+
+        _devargs_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^actual_devargs=(.*)$')
+          }}
+        _actual_devargs: >-
+          {{
+            _devargs_matches
+            | first
+            | default('')
+          }}
+
+        _error_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^error=(.*)$')
+          }}
+        _error: >-
+          {{
+            _error_matches
+            | first
+            | default('')
+          }}
+
+        _admin_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^admin_state=(.*)$')
+          }}
+        _admin_state: >-
+          {{
+            _admin_matches
+            | first
+            | default('')
+          }}
+
+        _link_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^link_state=(.*)$')
+          }}
+        _link_state: >-
+          {{
+            _link_matches
+            | first
+            | default('')
+          }}
+
+        _ofport_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^ofport=(.*)$')
+          }}
+        _ofport: >-
+          {{
+            _ofport_matches
+            | first
+            | default('0')
+          }}
+
+        _status_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^status=(.*)$')
+          }}
+        _status: >-
+          {{
+            _status_matches
+            | first
+            | default('')
+          }}
+
+        _dpif_attached_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^dpif_attached=(.*)$')
+          }}
+        _dpif_attached: >-
+          {{
+            (_dpif_attached_matches | first | default('false')) == 'true'
+          }}
+
+        _dpif_devargs_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^dpif_devargs_match=(.*)$')
+          }}
+        _dpif_devargs_match: >-
+          {{
+            (_dpif_devargs_matches | first | default('false')) == 'true'
+          }}
+
+        _dpif_line_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^dpif_line=(.*)$')
+          }}
+        _dpif_line: >-
+          {{
+            _dpif_line_matches
+            | first
+            | default('')
+          }}
+
+        _journal_error_count_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_error_count=(.*)$')
+          }}
+        _journal_error_count: >-
+          {{
+            _journal_error_count_matches
+            | first
+            | default('0')
+            | int
+          }}
+
+        _journal_success_count_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_success_count=(.*)$')
+          }}
+        _journal_success_count: >-
+          {{
+            _journal_success_count_matches
+            | first
+            | default('0')
+            | int
+          }}
+
+        _journal_recovered_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_errors_recovered=(.*)$')
+          }}
+        _journal_errors_recovered: >-
+          {{
+            (_journal_recovered_matches | first | default('false'))
+            == 'true'
+          }}
+
+        _journal_last_error_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_last_error=(.*)$')
+          }}
+        _journal_last_error: >-
+          {{
+            _journal_last_error_matches
+            | first
+            | default('')
+          }}
+
+        _journal_last_success_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_last_success=(.*)$')
+          }}
+        _journal_last_success: >-
+          {{
+            _journal_last_success_matches
+            | first
+            | default('')
+          }}
+
+        _journal_recent_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^journal_recent_errors=(.*)$')
+          }}
+        _journal_recent_errors: >-
+          {{
+            _journal_recent_matches
+            | first
+            | default('')
+          }}
+
+        _file_error_count_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^file_error_count=(.*)$')
+          }}
+        _file_error_count: >-
+          {{
+            _file_error_count_matches
+            | first
+            | default('0')
+            | int
+          }}
+
+        _file_last_error_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^file_last_error=(.*)$')
+          }}
+        _file_last_error: >-
+          {{
+            _file_last_error_matches
+            | first
+            | default('')
+          }}
+
+        _file_recent_matches: >-
+          {{
+            item.stdout
+            | regex_findall('(?m)^file_recent_errors=(.*)$')
+          }}
+        _file_recent_errors: >-
+          {{
+            _file_recent_matches
+            | first
+            | default('')
+          }}
+
+        _global_last_error_matches: >-
+          {{
+            _dpdk_init_global_log_probe.stdout
+            | regex_findall('(?m)^global_last_error=(.*)$')
+          }}
+        _global_last_error: >-
+          {{
+            _global_last_error_matches
+            | first
+            | default('')
+          }}
+
+        _healthy_error_values:
+          - ""
+          - "[]"
+          - '""'
+
+        _failures: >-
+          {%- set output = [] -%}
+
+          {%- if not _dpdk_initialized -%}
+            {%- set _ = output.append(
+                  'DPDK subsystem is not initialized'
+                ) -%}
+
+            {%- if _global_last_error | length > 0 -%}
+              {%- set _ = output.append(
+                    'startup error: '
+                    ~ _global_last_error
+                  ) -%}
+            {%- endif -%}
+          {%- endif -%}
+
+          {%- if not _exists -%}
+            {%- set _ = output.append(
+                  'OVS Interface object does not exist'
+                ) -%}
+
+          {%- else -%}
+
+            {%- if _actual_type != _expected.type -%}
+              {%- set _ = output.append(
+                    'type expected '
+                    ~ _expected.type
+                    ~ ', got '
+                    ~ _actual_type
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _actual_devargs != _expected.dpdk_devargs -%}
+              {%- set _ = output.append(
+                    'dpdk-devargs expected '
+                    ~ _expected.dpdk_devargs
+                    ~ ', got '
+                    ~ _actual_devargs
+                  ) -%}
+            {%- endif -%}
+
+            {%- if (_error | string) not in _healthy_error_values -%}
+              {%- set _ = output.append(
+                    'OVS Interface.error='
+                    ~ (_error | string)
+                  ) -%}
+            {%- endif -%}
+
+            {%- if (_ofport | int) <= 0 -%}
+              {%- set _ = output.append(
+                    'invalid OpenFlow port '
+                    ~ (_ofport | string)
+                  ) -%}
+            {%- endif -%}
+
+            {%- if not _dpif_attached -%}
+              {%- set _ = output.append(
+                    'interface is not attached to the OVS datapath as DPDK'
+                  ) -%}
+            {%- endif -%}
+
+            {%- if _dpif_attached and not _dpif_devargs_match -%}
+              {%- set _ = output.append(
+                    'datapath attachment does not use expected dpdk-devargs'
+                  ) -%}
+            {%- endif -%}
+
+          {%- endif -%}
+
+          {%- if output | length > 0
+                and _journal_last_error | length > 0 -%}
+            {%- set _ = output.append(
+                  'recent initialization error: '
+                  ~ _journal_last_error
+                ) -%}
+          {%- endif -%}
+
+          {{ output }}
+
+        _result: >-
+          {{
+            'failed'
+            if _failures | length > 0
+            else 'ok'
+          }}
+
+        _log_classification: >-
+          {%- if _failures | length > 0 -%}
+          persistent_runtime_failure
+          {%- elif _journal_error_count == 0
+                  and _file_error_count == 0 -%}
+          clean
+          {%- elif _journal_errors_recovered -%}
+          recovered_transient
+          {%- else -%}
+          historical_errors_runtime_healthy
+          {%- endif -%}
+
+      loop: "{{ _dpdk_init_probe.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Show DPDK interface initialization results
+      ansible.builtin.debug:
+        var: _dpdk_init_runtime
+
+    - name: Record per-interface DPDK initialization results
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: >-
+          DPDK interface initialization {{ item.key }}
+          on {{ inventory_hostname }}
+        result_value: "{{ item.value.result }}"
+        result_comment: "{{ item.value }}"
+      loop: "{{ _dpdk_init_runtime | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Record DPDK interface initialization host summary
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "DPDK interface initialization on {{ inventory_hostname }}"
+        result_value: >-
+          {{
+            'failed'
+            if _dpdk_init_failures | length > 0
+            else 'ok'
+          }}
+        result_comment:
+          service_state: "{{ _dpdk_init_service_probe.stdout_lines }}"
+          global_startup_errors: "{{ _dpdk_init_global_log_probe.stdout_lines }}"
+          interfaces: "{{ _dpdk_init_runtime }}"
+          failures: "{{ _dpdk_init_failures }}"

@@ -148,6 +148,14 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_ovs_topology_validation: false
 
+  # TEST CASE NAME: DPDK Interface Initialization Validation
+  # DESCRIPTION: Validates that inventory-defined DPDK interfaces successfully
+  # initialize and attach to the running OVS userspace datapath. Correlates
+  # current OVSDB state, datapath attachment and OVS startup/runtime errors while
+  # distinguishing recovered startup errors from persistent runtime failures.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_dpdk_interface_init_validation: false
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing

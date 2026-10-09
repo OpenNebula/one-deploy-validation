@@ -1,0 +1,3 @@
+---
+- name: Run vhost-user path validation
+  ansible.builtin.include_tasks: vhost-user.yml

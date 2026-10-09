@@ -1,0 +1,74 @@
+---
+# Default expectations mirror the vhost-user runtime layout deployed by
+# OpenNebula one-deploy. Every value can be overridden through:
+#
+# validation:
+#   vhost_user:
+#     ...
+
+vhost_user_validation_defaults:
+  directories:
+    - path: /var/run/one
+      owner: 9869
+      group: 9869
+      mode: "0770"
+      acls:
+        - "user:openvswitch:r-x"
+      access:
+        - user: openvswitch
+          permissions: "rx"
+      selinux_type: null
+
+    - path: /var/run/one/vhost-socks
+      owner: 9869
+      group: 9869
+      mode: "0770"
+      acls:
+        - "user:openvswitch:rwx"
+        - "default:user:openvswitch:rwx"
+      access:
+        - user: openvswitch
+          permissions: "rwx"
+      selinux_type: virt_var_run_t
+
+  # QEMU/libvirt access is checked separately from the static directory ACLs.
+  #
+  # Running QEMU process owners are discovered automatically. If there are no
+  # running QEMU processes, fallback_users are checked instead.
+  qemu_access:
+    discover_running_users: true
+    fallback_users:
+      - oneadmin
+    paths:
+      - path: /var/run/one
+        permissions: "x"
+      - path: /var/run/one/vhost-socks
+        permissions: "wx"
+
+  sockets:
+    directory: /var/run/one/vhost-socks
+
+    # Inspect all currently existing UNIX sockets in the directory.
+    inspect_existing: true
+
+    # Optional exact socket paths that must exist. Useful for static
+    # vhost-user deployments. Dynamic OpenNebula VM sockets normally do not
+    # need to be listed here.
+    expected_paths: []
+
+    owner: 9869
+    group: 9869
+    mode: "0770"
+
+    acls:
+      - "user:openvswitch:rwx"
+
+    access:
+      - user: openvswitch
+        permissions: "rw"
+
+    selinux_type: virt_var_run_t
+
+  selinux:
+    validate: true
+    policy_module: dpdk_virt

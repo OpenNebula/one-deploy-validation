@@ -156,6 +156,65 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_dpdk_interface_init_validation: false
 
+  # TEST CASE NAME: Vhost-User Runtime Path Validation
+  # DESCRIPTION: Validates the runtime directories, ownership, permissions,
+  # ACLs, effective OVS/QEMU access, existing vhost-user sockets and SELinux
+  # state required for OVS DPDK vhost-user networking.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_vhost_user_validation: false
+  vhost_user:
+    directories:
+      - path: /var/run/one
+        owner: 9869
+        group: 9869
+        mode: "0770"
+        acls:
+          - "user:openvswitch:r-x"
+        access:
+          - user: openvswitch
+            permissions: "rx"
+        selinux_type: null
+
+      - path: /var/run/one/vhost-socks
+        owner: 9869
+        group: 9869
+        mode: "0770"
+        acls:
+          - "user:openvswitch:rwx"
+          - "default:user:openvswitch:rwx"
+        access:
+          - user: openvswitch
+            permissions: "rwx"
+        selinux_type: virt_var_run_t
+
+    qemu_access:
+      discover_running_users: true
+      fallback_users:
+        - oneadmin
+      paths:
+        - path: /var/run/one
+          permissions: "x"
+        - path: /var/run/one/vhost-socks
+          permissions: "wx"
+
+    sockets:
+      directory: /var/run/one/vhost-socks
+      inspect_existing: true
+      expected_paths: []
+      owner: 9869
+      group: 9869
+      mode: "0770"
+      acls:
+        - "user:openvswitch:rwx"
+      access:
+        - user: openvswitch
+          permissions: "rw"
+      selinux_type: virt_var_run_t
+
+    selinux:
+      validate: true
+      policy_module: dpdk_virt
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing

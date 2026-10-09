@@ -1,0 +1,390 @@
+---
+- name: "Inspect vhost-user directory {{ vhost_user_directory.path }}"
+  ansible.builtin.stat:
+    path: "{{ vhost_user_directory.path }}"
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: _vhost_user_dir_stat
+
+- name: "Read ACLs for {{ vhost_user_directory.path }}"
+  ansible.builtin.command:
+    argv:
+      - getfacl
+      - -cp
+      - "{{ vhost_user_directory.path }}"
+  register: _vhost_user_dir_acl
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_dir_stat.stat.exists | d(false)
+    - _vhost_user_dir_stat.stat.isdir | d(false)
+
+- name: "Read SELinux type for {{ vhost_user_directory.path }}"
+  ansible.builtin.shell:
+    cmd: |
+      stat -Lc '%C' -- {{ vhost_user_directory.path | quote }} |
+      awk -F: '{ print $3 }'
+    executable: /bin/bash
+  register: _vhost_user_dir_selinux
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_dir_stat.stat.exists | d(false)
+    - _vhost_user_selinux_enabled | bool
+    - (vhost_user_directory.selinux_type | d(none)) is not none
+
+- name: "Check effective DAC access to {{ vhost_user_directory.path }}"
+  ansible.builtin.shell:
+    cmd: |
+      USER_NAME={{ item.user | quote }}
+      TARGET={{ vhost_user_directory.path | quote }}
+      EXPECTED={{ item.permissions | quote }}
+
+      if ! id "$USER_NAME" >/dev/null 2>&1; then
+          echo "user=${USER_NAME} missing"
+          exit 2
+      fi
+
+      ACTUAL=""
+
+      runuser -u "$USER_NAME" -- test -r "$TARGET" && ACTUAL="${ACTUAL}r"
+      runuser -u "$USER_NAME" -- test -w "$TARGET" && ACTUAL="${ACTUAL}w"
+      runuser -u "$USER_NAME" -- test -x "$TARGET" && ACTUAL="${ACTUAL}x"
+
+      echo "user=${USER_NAME}"
+      echo "expected=${EXPECTED}"
+      echo "actual=${ACTUAL}"
+
+      FAILED=0
+
+      [[ "$EXPECTED" != *r* ]] ||
+          runuser -u "$USER_NAME" -- test -r "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *w* ]] ||
+          runuser -u "$USER_NAME" -- test -w "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *x* ]] ||
+          runuser -u "$USER_NAME" -- test -x "$TARGET" ||
+          FAILED=1
+
+      exit "$FAILED"
+    executable: /bin/bash
+  register: _vhost_user_dir_access
+  changed_when: false
+  failed_when: false
+  loop: "{{ vhost_user_directory.access | d([]) }}"
+  loop_control:
+    label: "{{ item.user }}:{{ item.permissions }}"
+  when:
+    - _vhost_user_dir_stat.stat.exists | d(false)
+    - _vhost_user_dir_stat.stat.isdir | d(false)
+
+- name: "Evaluate vhost-user directory {{ vhost_user_directory.path }}"
+  ansible.builtin.set_fact:
+    _vhost_user_dir_eval:
+      exists: "{{ _exists }}"
+      is_directory: "{{ _is_directory }}"
+
+      expected_owner: "{{ _expected_owner }}"
+      actual_owner: "{{ _actual_owner }}"
+      expected_group: "{{ _expected_group }}"
+      actual_group: "{{ _actual_group }}"
+
+      expected_mode: "{{ _expected_mode }}"
+      actual_mode: "{{ _actual_mode }}"
+
+      expected_acls: "{{ _expected_acls }}"
+      actual_acls: "{{ _actual_acls }}"
+      missing_acls: "{{ _missing_acls }}"
+
+      access_failures: "{{ _access_failures }}"
+
+      selinux_configured: "{{ _selinux_configured }}"
+      expected_selinux_type: "{{ _expected_selinux_type }}"
+      actual_selinux_type: "{{ _actual_selinux_type }}"
+
+      existence_result: >-
+        {%- if _exists and _is_directory -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+
+      ownership_result: >-
+        {%- if not _exists or not _is_directory -%}
+        skipped — directory missing
+        {%- elif not _ownership_configured -%}
+        skipped — no ownership expectation configured
+        {%- elif _ownership_ok -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+
+      mode_result: >-
+        {%- if not _exists or not _is_directory -%}
+        skipped — directory missing
+        {%- elif not _mode_configured -%}
+        skipped — no mode expectation configured
+        {%- elif _mode_ok -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+
+      acl_result: >-
+        {%- if not _exists or not _is_directory -%}
+        skipped — directory missing
+        {%- elif _expected_acls | length == 0 -%}
+        skipped — no ACL expectations configured
+        {%- elif _acl_ok -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+
+      access_result: >-
+        {%- if not _exists or not _is_directory -%}
+        skipped — directory missing
+        {%- elif (vhost_user_directory.access | d([])) | length == 0 -%}
+        skipped — no access expectations configured
+        {%- elif _access_failures | length == 0 -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+
+      selinux_result: >-
+        {%- if not _selinux_configured -%}
+        skipped — no SELinux type expectation configured
+        {%- elif not _vhost_user_selinux_enabled -%}
+        skipped — SELinux disabled
+        {%- elif not _exists or not _is_directory -%}
+        skipped — directory missing
+        {%- elif _selinux_ok -%}
+        ok
+        {%- else -%}
+        failed
+        {%- endif -%}
+  vars:
+    _exists: "{{ _vhost_user_dir_stat.stat.exists | d(false) }}"
+    _is_directory: "{{ _vhost_user_dir_stat.stat.isdir | d(false) }}"
+
+    _expected_owner: "{{ vhost_user_directory.owner | d(none) }}"
+    _expected_group: "{{ vhost_user_directory.group | d(none) }}"
+
+    _actual_owner: "{{ _vhost_user_dir_stat.stat.uid | d(none) }}"
+    _actual_group: "{{ _vhost_user_dir_stat.stat.gid | d(none) }}"
+
+    _ownership_configured: >-
+      {{
+        _expected_owner is not none
+        or _expected_group is not none
+      }}
+
+    _ownership_ok: >-
+      {{
+        (_expected_owner is none
+         or (_actual_owner | int) == (_expected_owner | int))
+        and
+        (_expected_group is none
+         or (_actual_group | int) == (_expected_group | int))
+      }}
+
+    _expected_mode: "{{ vhost_user_directory.mode | d(none) }}"
+    _actual_mode: "{{ _vhost_user_dir_stat.stat.mode | d('') }}"
+    _mode_configured: "{{ _expected_mode is not none }}"
+
+    _mode_ok: >-
+      {{
+        _expected_mode is none
+        or (_actual_mode | string) == (_expected_mode | string)
+      }}
+
+    _expected_acls: "{{ vhost_user_directory.acls | d([]) }}"
+    _actual_acls: "{{ _vhost_user_dir_acl.stdout_lines | d([]) }}"
+    _missing_acls: "{{ _expected_acls | difference(_actual_acls) }}"
+
+    _acl_ok: >-
+      {{
+        (_vhost_user_dir_acl.rc | d(1) | int) == 0
+        and _missing_acls | length == 0
+      }}
+
+    _access_failures: >-
+      {%- set out = [] -%}
+      {%- for result in _vhost_user_dir_access.results | d([]) -%}
+        {%- if (result.rc | d(1) | int) != 0 -%}
+          {%- set _ = out.append(
+                result.item.user
+                ~ ': expected '
+                ~ result.item.permissions
+                ~ ', '
+                ~ (result.stdout | d('access check failed'))
+              ) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+    _selinux_configured: >-
+      {{
+        (vhost_user_directory.selinux_type | d(none))
+        is not none
+      }}
+
+    _expected_selinux_type: >-
+      {{
+        vhost_user_directory.selinux_type
+        if _selinux_configured
+        else ''
+      }}
+
+    _actual_selinux_type: >-
+      {{ _vhost_user_dir_selinux.stdout | d('') | trim }}
+
+    _selinux_ok: >-
+      {{
+        not _selinux_configured
+        or (
+          (_vhost_user_dir_selinux.rc | d(1) | int) == 0
+          and (_actual_selinux_type | string)
+              == (vhost_user_directory.selinux_type | string)
+        )
+      }}
+
+- name: "Collect failures for {{ vhost_user_directory.path }}"
+  ansible.builtin.set_fact:
+    _vhost_user_failures: >-
+      {{
+        _vhost_user_failures
+        + _directory_failures
+      }}
+  vars:
+    _directory_failures: >-
+      {%- set out = [] -%}
+
+      {%- if _vhost_user_dir_eval.existence_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': directory is missing or is not a directory'
+            ) -%}
+      {%- endif -%}
+
+      {%- if _vhost_user_dir_eval.ownership_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': ownership expected '
+              ~ (_vhost_user_dir_eval.expected_owner | string)
+              ~ ':'
+              ~ (_vhost_user_dir_eval.expected_group | string)
+              ~ ', got '
+              ~ (_vhost_user_dir_eval.actual_owner | string)
+              ~ ':'
+              ~ (_vhost_user_dir_eval.actual_group | string)
+            ) -%}
+      {%- endif -%}
+
+      {%- if _vhost_user_dir_eval.mode_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': mode expected '
+              ~ (_vhost_user_dir_eval.expected_mode | string)
+              ~ ', got '
+              ~ (_vhost_user_dir_eval.actual_mode | string)
+            ) -%}
+      {%- endif -%}
+
+      {%- if _vhost_user_dir_eval.acl_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': missing ACLs '
+              ~ (_vhost_user_dir_eval.missing_acls | join(', '))
+            ) -%}
+      {%- endif -%}
+
+      {%- if _vhost_user_dir_eval.access_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': effective access failure '
+              ~ (_vhost_user_dir_eval.access_failures | join('; '))
+            ) -%}
+      {%- endif -%}
+
+      {%- if _vhost_user_dir_eval.selinux_result == 'failed' -%}
+        {%- set _ = out.append(
+              vhost_user_directory.path
+              ~ ': SELinux type expected '
+              ~ (_vhost_user_dir_eval.expected_selinux_type | string)
+              ~ ', got '
+              ~ (_vhost_user_dir_eval.actual_selinux_type | string)
+            ) -%}
+      {%- endif -%}
+
+      {{ out }}
+
+- name: "Record directory validation results for {{ vhost_user_directory.path }}"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ item.key }}"
+    result_value: "{{ item.value }}"
+    result_comment: "{{ item.comment }}"
+  loop:
+    - key: >-
+        Vhost-user directory existence {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.existence_result }}"
+      comment:
+        exists: "{{ _vhost_user_dir_eval.exists }}"
+        is_directory: "{{ _vhost_user_dir_eval.is_directory }}"
+
+    - key: >-
+        Vhost-user directory ownership {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.ownership_result }}"
+      comment:
+        expected_owner: "{{ _vhost_user_dir_eval.expected_owner }}"
+        actual_owner: "{{ _vhost_user_dir_eval.actual_owner }}"
+        expected_group: "{{ _vhost_user_dir_eval.expected_group }}"
+        actual_group: "{{ _vhost_user_dir_eval.actual_group }}"
+
+    - key: >-
+        Vhost-user directory mode {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.mode_result }}"
+      comment:
+        expected: "{{ _vhost_user_dir_eval.expected_mode }}"
+        actual: "{{ _vhost_user_dir_eval.actual_mode }}"
+
+    - key: >-
+        Vhost-user directory ACLs {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.acl_result }}"
+      comment:
+        expected: "{{ _vhost_user_dir_eval.expected_acls }}"
+        actual: "{{ _vhost_user_dir_eval.actual_acls }}"
+        missing: "{{ _vhost_user_dir_eval.missing_acls }}"
+
+    - key: >-
+        Vhost-user directory access {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.access_result }}"
+      comment:
+        failures: "{{ _vhost_user_dir_eval.access_failures }}"
+
+    - key: >-
+        Vhost-user SELinux context {{ vhost_user_directory.path }}
+        on {{ inventory_hostname }}
+      value: "{{ _vhost_user_dir_eval.selinux_result }}"
+      comment:
+        selinux_mode: "{{ _vhost_user_selinux_mode }}"
+        configured: "{{ _vhost_user_dir_eval.selinux_configured }}"
+        expected_type: "{{ _vhost_user_dir_eval.expected_selinux_type }}"
+        actual_type: "{{ _vhost_user_dir_eval.actual_selinux_type }}"
+  loop_control:
+    label: "{{ item.key }}"

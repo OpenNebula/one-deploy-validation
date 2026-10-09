@@ -147,6 +147,18 @@
         - validation.run_dpdk_interface_init_validation | d(false)
         - not (_gb_pre | bool)
 
+# Validate vhost-user runtime directories, sockets, ACLs and security context.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [vhost_user_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: vhost-user-validation
+      when:
+        - validation.run_vhost_user_validation | d(false)
+        - not (_gb_pre | bool)
+
 
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
@@ -394,6 +406,21 @@
           {{ (report_verification_comments | default({}))
              | combine(hostvars[item].verification_comments | default({}) | dict2items
                        | selectattr('key', 'search', 'DPDK interface initialization') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      when:
+        - hostvars[item].verification_result is defined
+
+
+    - name: Fold node-host vhost-user validation results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'Vhost-user') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'Vhost-user') | items2dict) }}
       loop: "{{ groups[node_group | d('node')] }}"
       when:
         - hostvars[item].verification_result is defined

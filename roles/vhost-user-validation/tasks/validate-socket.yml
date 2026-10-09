@@ -1,0 +1,247 @@
+---
+- name: "Inspect vhost-user socket {{ vhost_user_socket }}"
+  ansible.builtin.stat:
+    path: "{{ vhost_user_socket }}"
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: _vhost_user_socket_stat
+
+- name: "Read ACLs for socket {{ vhost_user_socket }}"
+  ansible.builtin.command:
+    argv:
+      - getfacl
+      - -cp
+      - "{{ vhost_user_socket }}"
+  register: _vhost_user_socket_acl
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_socket_stat.stat.exists | d(false)
+
+- name: "Read SELinux type for socket {{ vhost_user_socket }}"
+  ansible.builtin.shell:
+    cmd: |
+      stat -Lc '%C' -- {{ vhost_user_socket | quote }} |
+      awk -F: '{ print $3 }'
+    executable: /bin/bash
+  register: _vhost_user_socket_selinux
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_socket_stat.stat.exists | d(false)
+    - _vhost_user_selinux_enabled | bool
+    - _vhost_user_config.sockets.selinux_type | d(none) is not none
+
+- name: "Check effective access to socket {{ vhost_user_socket }}"
+  ansible.builtin.shell:
+    cmd: |
+      USER_NAME={{ item.user | quote }}
+      TARGET={{ vhost_user_socket | quote }}
+      EXPECTED={{ item.permissions | quote }}
+
+      if ! id "$USER_NAME" >/dev/null 2>&1; then
+          echo "user=${USER_NAME} missing"
+          exit 2
+      fi
+
+      ACTUAL=""
+
+      runuser -u "$USER_NAME" -- test -r "$TARGET" && ACTUAL="${ACTUAL}r"
+      runuser -u "$USER_NAME" -- test -w "$TARGET" && ACTUAL="${ACTUAL}w"
+      runuser -u "$USER_NAME" -- test -x "$TARGET" && ACTUAL="${ACTUAL}x"
+
+      echo "user=${USER_NAME}"
+      echo "expected=${EXPECTED}"
+      echo "actual=${ACTUAL}"
+
+      FAILED=0
+
+      [[ "$EXPECTED" != *r* ]] ||
+          runuser -u "$USER_NAME" -- test -r "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *w* ]] ||
+          runuser -u "$USER_NAME" -- test -w "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *x* ]] ||
+          runuser -u "$USER_NAME" -- test -x "$TARGET" ||
+          FAILED=1
+
+      exit "$FAILED"
+    executable: /bin/bash
+  register: _vhost_user_socket_access
+  changed_when: false
+  failed_when: false
+  loop: "{{ _vhost_user_config.sockets.access | d([]) }}"
+  loop_control:
+    label: "{{ item.user }}:{{ item.permissions }}"
+  when:
+    - _vhost_user_socket_stat.stat.exists | d(false)
+
+- name: "Evaluate vhost-user socket {{ vhost_user_socket }}"
+  ansible.builtin.set_fact:
+    _vhost_user_socket_eval:
+      result: "{{ 'failed' if _failures | length > 0 else 'ok' }}"
+      failures: "{{ _failures }}"
+
+      exists: "{{ _exists }}"
+      is_socket: "{{ _is_socket }}"
+
+      expected_owner: "{{ _expected_owner }}"
+      actual_owner: "{{ _actual_owner }}"
+      expected_group: "{{ _expected_group }}"
+      actual_group: "{{ _actual_group }}"
+
+      expected_mode: "{{ _expected_mode }}"
+      actual_mode: "{{ _actual_mode }}"
+
+      expected_acls: "{{ _expected_acls }}"
+      actual_acls: "{{ _actual_acls }}"
+      missing_acls: "{{ _missing_acls }}"
+
+      access_failures: "{{ _access_failures }}"
+
+      expected_selinux_type: "{{ _expected_selinux_type }}"
+      actual_selinux_type: "{{ _actual_selinux_type }}"
+  vars:
+    _exists: "{{ _vhost_user_socket_stat.stat.exists | d(false) }}"
+    _is_socket: "{{ _vhost_user_socket_stat.stat.issock | d(false) }}"
+
+    _expected_owner: "{{ _vhost_user_config.sockets.owner | d(none) }}"
+    _expected_group: "{{ _vhost_user_config.sockets.group | d(none) }}"
+
+    _actual_owner: "{{ _vhost_user_socket_stat.stat.uid | d(none) }}"
+    _actual_group: "{{ _vhost_user_socket_stat.stat.gid | d(none) }}"
+
+    _expected_mode: "{{ _vhost_user_config.sockets.mode | d(none) }}"
+    _actual_mode: "{{ _vhost_user_socket_stat.stat.mode | d('') }}"
+
+    _expected_acls: "{{ _vhost_user_config.sockets.acls | d([]) }}"
+    _actual_acls: "{{ _vhost_user_socket_acl.stdout_lines | d([]) }}"
+    _missing_acls: "{{ _expected_acls | difference(_actual_acls) }}"
+
+    _expected_selinux_type: >-
+      {{ _vhost_user_config.sockets.selinux_type | d(none) }}
+
+    _actual_selinux_type: >-
+      {{ _vhost_user_socket_selinux.stdout | d('') | trim }}
+
+    _access_failures: >-
+      {%- set out = [] -%}
+      {%- for result in _vhost_user_socket_access.results | d([]) -%}
+        {%- if (result.rc | d(1) | int) != 0 -%}
+          {%- set _ = out.append(
+                result.item.user
+                ~ ': expected '
+                ~ result.item.permissions
+                ~ ', '
+                ~ (result.stdout | d('access check failed'))
+              ) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+    _failures: >-
+      {%- set out = [] -%}
+
+      {%- if not _exists -%}
+        {%- set _ = out.append('socket does not exist') -%}
+
+      {%- elif not _is_socket -%}
+        {%- set _ = out.append('path exists but is not a UNIX socket') -%}
+
+      {%- else -%}
+
+        {%- if _expected_owner is not none
+              and (_actual_owner | int) != (_expected_owner | int) -%}
+          {%- set _ = out.append(
+                'owner expected '
+                ~ (_expected_owner | string)
+                ~ ', got '
+                ~ (_actual_owner | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if _expected_group is not none
+              and (_actual_group | int) != (_expected_group | int) -%}
+          {%- set _ = out.append(
+                'group expected '
+                ~ (_expected_group | string)
+                ~ ', got '
+                ~ (_actual_group | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if _expected_mode is not none
+              and (_actual_mode | string) != (_expected_mode | string) -%}
+          {%- set _ = out.append(
+                'mode expected '
+                ~ (_expected_mode | string)
+                ~ ', got '
+                ~ (_actual_mode | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if (_vhost_user_socket_acl.rc | d(1) | int) != 0 -%}
+          {%- set _ = out.append('unable to read socket ACL') -%}
+
+        {%- elif _missing_acls | length > 0 -%}
+          {%- set _ = out.append(
+                'missing ACLs '
+                ~ (_missing_acls | join(', '))
+              ) -%}
+        {%- endif -%}
+
+        {%- if _access_failures | length > 0 -%}
+          {%- set _ = out.append(
+                'effective access failure '
+                ~ (_access_failures | join('; '))
+              ) -%}
+        {%- endif -%}
+
+        {%- if _expected_selinux_type is not none
+              and _vhost_user_selinux_enabled
+              and (
+                (_vhost_user_socket_selinux.rc | d(1) | int) != 0
+                or (_actual_selinux_type | string)
+                   != (_expected_selinux_type | string)
+              ) -%}
+          {%- set _ = out.append(
+                'SELinux type expected '
+                ~ (_expected_selinux_type | string)
+                ~ ', got '
+                ~ (_actual_selinux_type | string)
+              ) -%}
+        {%- endif -%}
+
+      {%- endif -%}
+
+      {{ out }}
+
+- name: "Collect failure for socket {{ vhost_user_socket }}"
+  ansible.builtin.set_fact:
+    _vhost_user_failures: >-
+      {{
+        _vhost_user_failures
+        + [
+            vhost_user_socket
+            ~ ': '
+            ~ (_vhost_user_socket_eval.failures | join('; '))
+          ]
+      }}
+  when:
+    - _vhost_user_socket_eval.result == 'failed'
+
+- name: "Record socket result {{ vhost_user_socket }}"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      Vhost-user socket {{ vhost_user_socket }}
+      on {{ inventory_hostname }}
+    result_value: "{{ _vhost_user_socket_eval.result }}"
+    result_comment: "{{ _vhost_user_socket_eval }}"

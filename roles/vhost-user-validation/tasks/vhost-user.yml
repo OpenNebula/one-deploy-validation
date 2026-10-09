@@ -1,0 +1,334 @@
+---
+- name: Build vhost-user validation configuration
+  ansible.builtin.set_fact:
+    _vhost_user_config: >-
+      {{
+        vhost_user_validation_defaults
+        | combine(
+            (validation | d({})).get('vhost_user', {}),
+            recursive=true,
+            list_merge='replace'
+          )
+      }}
+
+- name: Initialize vhost-user validation
+  ansible.builtin.set_fact:
+    _vhost_user_failures: []
+    _vhost_user_socket_paths: []
+    _vhost_user_qemu_users: []
+
+- name: Detect SELinux mode
+  ansible.builtin.shell:
+    cmd: |
+      if command -v getenforce >/dev/null 2>&1; then
+          getenforce
+      else
+          echo Disabled
+      fi
+    executable: /bin/bash
+  register: _vhost_user_selinux_probe
+  changed_when: false
+  failed_when: false
+
+- name: Set SELinux validation state
+  ansible.builtin.set_fact:
+    _vhost_user_selinux_mode: >-
+      {{ _vhost_user_selinux_probe.stdout | trim }}
+    _vhost_user_selinux_enabled: >-
+      {{
+        (_vhost_user_config.selinux.validate | d(true) | bool)
+        and
+        ((_vhost_user_selinux_probe.stdout | trim)
+          in ['Enforcing', 'Permissive'])
+      }}
+
+- name: Check expected SELinux policy module
+  ansible.builtin.shell:
+    cmd: |
+      MODULE={{ _vhost_user_config.selinux.policy_module | quote }}
+
+      command -v semodule >/dev/null 2>&1 || exit 2
+
+      semodule -l 2>/dev/null |
+      awk -v module="$MODULE" '
+          $1 == module {
+              found=1
+          }
+
+          END {
+              exit found ? 0 : 1
+          }
+      '
+    executable: /bin/bash
+  register: _vhost_user_selinux_module
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_selinux_enabled | bool
+    - (_vhost_user_config.selinux.policy_module | d('') | length) > 0
+
+- name: Evaluate SELinux policy module
+  ansible.builtin.set_fact:
+    _vhost_user_selinux_module_result: >-
+      {%- if not _vhost_user_selinux_enabled -%}
+      skipped — SELinux disabled
+      {%- elif (_vhost_user_config.selinux.policy_module | d('') | length) == 0 -%}
+      skipped — no policy module expectation configured
+      {%- elif (_vhost_user_selinux_module.rc | d(1) | int) == 0 -%}
+      ok
+      {%- else -%}
+      failed
+      {%- endif -%}
+
+- name: Record SELinux policy module failure
+  ansible.builtin.set_fact:
+    _vhost_user_failures: >-
+      {{
+        _vhost_user_failures
+        + [
+            'SELinux policy module '
+            ~ _vhost_user_config.selinux.policy_module
+            ~ ' is not installed'
+          ]
+      }}
+  when:
+    - _vhost_user_selinux_module_result == 'failed'
+
+- name: Record vhost-user SELinux policy result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      Vhost-user SELinux policy on {{ inventory_hostname }}
+    result_value: "{{ _vhost_user_selinux_module_result }}"
+    result_comment:
+      selinux_mode: "{{ _vhost_user_selinux_mode }}"
+      expected_module: >-
+        {{ _vhost_user_config.selinux.policy_module | d('') }}
+      module_command_rc: >-
+        {{ _vhost_user_selinux_module.rc | d(none) }}
+
+- name: Validate configured vhost-user directories
+  ansible.builtin.include_tasks: validate-directory.yml
+  loop: "{{ _vhost_user_config.directories }}"
+  loop_control:
+    loop_var: vhost_user_directory
+    label: "{{ vhost_user_directory.path }}"
+
+- name: Discover users running QEMU processes
+  ansible.builtin.shell:
+    cmd: |
+      ps -eo user=,comm= |
+      awk '
+          $2 == "qemu-kvm" ||
+          $2 == "qemu-kvm-one" ||
+          $2 ~ /^qemu-system-/ {
+              print $1
+          }
+      ' |
+      sort -u
+    executable: /bin/bash
+  register: _vhost_user_qemu_process_users
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_config.qemu_access.discover_running_users | d(true) | bool
+
+- name: Select QEMU users to validate
+  ansible.builtin.set_fact:
+    _vhost_user_qemu_users: >-
+      {{
+        (
+          _vhost_user_qemu_process_users.stdout_lines
+          | d([])
+          | reject('equalto', '')
+          | unique
+          | list
+        )
+        if (
+          _vhost_user_qemu_process_users.stdout_lines
+          | d([])
+          | reject('equalto', '')
+          | list
+          | length
+        ) > 0
+        else
+        (_vhost_user_config.qemu_access.fallback_users | d([]))
+      }}
+
+- name: Check effective QEMU path access
+  ansible.builtin.shell:
+    cmd: |
+      USER_NAME={{ item.0 | quote }}
+      TARGET={{ item.1.path | quote }}
+      EXPECTED={{ item.1.permissions | quote }}
+
+      if ! id "$USER_NAME" >/dev/null 2>&1; then
+          echo "user=${USER_NAME} missing"
+          exit 2
+      fi
+
+      ACTUAL=""
+
+      runuser -u "$USER_NAME" -- test -r "$TARGET" && ACTUAL="${ACTUAL}r"
+      runuser -u "$USER_NAME" -- test -w "$TARGET" && ACTUAL="${ACTUAL}w"
+      runuser -u "$USER_NAME" -- test -x "$TARGET" && ACTUAL="${ACTUAL}x"
+
+      echo "user=${USER_NAME}"
+      echo "path=${TARGET}"
+      echo "expected=${EXPECTED}"
+      echo "actual=${ACTUAL}"
+
+      FAILED=0
+
+      [[ "$EXPECTED" != *r* ]] ||
+          runuser -u "$USER_NAME" -- test -r "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *w* ]] ||
+          runuser -u "$USER_NAME" -- test -w "$TARGET" ||
+          FAILED=1
+
+      [[ "$EXPECTED" != *x* ]] ||
+          runuser -u "$USER_NAME" -- test -x "$TARGET" ||
+          FAILED=1
+
+      exit "$FAILED"
+    executable: /bin/bash
+  register: _vhost_user_qemu_access
+  changed_when: false
+  failed_when: false
+  loop: >-
+    {{
+      _vhost_user_qemu_users
+      | product(_vhost_user_config.qemu_access.paths)
+      | list
+    }}
+  loop_control:
+    label: "{{ item.0 }} -> {{ item.1.path }}"
+
+- name: Collect QEMU path access failures
+  ansible.builtin.set_fact:
+    _vhost_user_failures: >-
+      {{
+        _vhost_user_failures
+        + [
+            'QEMU user '
+            ~ item.item.0
+            ~ ' cannot access '
+            ~ item.item.1.path
+            ~ ' with required permissions '
+            ~ item.item.1.permissions
+          ]
+      }}
+  loop: "{{ _vhost_user_qemu_access.results | d([]) }}"
+  loop_control:
+    label: "{{ item.item.0 }} -> {{ item.item.1.path }}"
+  when:
+    - (item.rc | d(1) | int) != 0
+
+- name: Record QEMU path access results
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      Vhost-user QEMU access {{ item.item.0 }}
+      {{ item.item.1.path }} on {{ inventory_hostname }}
+    result_value: >-
+      {{
+        'ok'
+        if (item.rc | d(1) | int) == 0
+        else 'failed'
+      }}
+    result_comment:
+      required_permissions: "{{ item.item.1.permissions }}"
+      probe: "{{ item.stdout_lines | d([]) }}"
+  loop: "{{ _vhost_user_qemu_access.results | d([]) }}"
+  loop_control:
+    label: "{{ item.item.0 }} -> {{ item.item.1.path }}"
+
+- name: Discover existing vhost-user sockets
+  ansible.builtin.shell:
+    cmd: |
+      DIRECTORY={{ _vhost_user_config.sockets.directory | quote }}
+
+      if [[ ! -d "$DIRECTORY" ]]; then
+          exit 0
+      fi
+
+      find "$DIRECTORY" \
+          -maxdepth 1 \
+          -type s \
+          -print |
+      sort
+    executable: /bin/bash
+  register: _vhost_user_socket_discovery
+  changed_when: false
+  failed_when: false
+  when:
+    - _vhost_user_config.sockets.inspect_existing | d(true) | bool
+
+- name: Build vhost-user socket validation list
+  ansible.builtin.set_fact:
+    _vhost_user_socket_paths: >-
+      {{
+        (
+          (_vhost_user_config.sockets.expected_paths | d([]))
+          +
+          (
+            _vhost_user_socket_discovery.stdout_lines
+            | d([])
+            if
+              (_vhost_user_config.sockets.inspect_existing | d(true) | bool)
+            else
+              []
+          )
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Record no vhost-user sockets found
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      Vhost-user sockets on {{ inventory_hostname }}
+    result_value: "skipped — no existing or expected sockets"
+    result_comment:
+      directory: "{{ _vhost_user_config.sockets.directory }}"
+      inspect_existing: >-
+        {{ _vhost_user_config.sockets.inspect_existing | d(true) }}
+      expected_paths: >-
+        {{ _vhost_user_config.sockets.expected_paths | d([]) }}
+  when:
+    - _vhost_user_socket_paths | length == 0
+
+- name: Validate vhost-user sockets
+  ansible.builtin.include_tasks: validate-socket.yml
+  loop: "{{ _vhost_user_socket_paths }}"
+  loop_control:
+    loop_var: vhost_user_socket
+    label: "{{ vhost_user_socket }}"
+
+- name: Record vhost-user validation host summary
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Vhost-user validation on {{ inventory_hostname }}"
+    result_value: >-
+      {{
+        'failed'
+        if _vhost_user_failures | length > 0
+        else 'ok'
+      }}
+    result_comment:
+      selinux_mode: "{{ _vhost_user_selinux_mode }}"
+      qemu_users: "{{ _vhost_user_qemu_users }}"
+      sockets: "{{ _vhost_user_socket_paths }}"
+      failures: "{{ _vhost_user_failures }}"

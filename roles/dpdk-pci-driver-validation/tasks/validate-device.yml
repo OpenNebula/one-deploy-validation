@@ -1,0 +1,351 @@
+---
+- name: "Inspect PCI device {{ dpdk_pci_device.key }}"
+  ansible.builtin.stat:
+    path: "/sys/bus/pci/devices/{{ dpdk_pci_device.key }}"
+    follow: false
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: _dpdk_pci_stat
+
+- name: "Read bound driver for {{ dpdk_pci_device.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      DEVICE=/sys/bus/pci/devices/{{ dpdk_pci_device.key | quote }}
+
+      if [[ ! -e "$DEVICE" ]]; then
+          exit 2
+      fi
+
+      if [[ ! -L "$DEVICE/driver" ]]; then
+          echo UNBOUND
+          exit 0
+      fi
+
+      basename "$(readlink -f "$DEVICE/driver")"
+    executable: /bin/bash
+  register: _dpdk_pci_driver
+  changed_when: false
+  failed_when: false
+
+- name: "Read PCI description for {{ dpdk_pci_device.key }}"
+  ansible.builtin.command:
+    argv:
+      - lspci
+      - -Dnnk
+      - -s
+      - "{{ dpdk_pci_device.key }}"
+  register: _dpdk_pci_lspci
+  changed_when: false
+  failed_when: false
+  when:
+    - _dpdk_pci_stat.stat.exists | d(false)
+
+- name: "Read driverctl override for {{ dpdk_pci_device.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      if ! command -v driverctl >/dev/null 2>&1; then
+          exit 3
+      fi
+
+      driverctl list-overrides 2>/dev/null |
+      awk -v pci={{ dpdk_pci_device.key | quote }} '
+          $1 == pci {
+              print $2
+              found=1
+              exit
+          }
+
+          END {
+              if (!found)
+                  exit 1
+          }
+      '
+    executable: /bin/bash
+  register: _dpdk_pci_driverctl
+  changed_when: false
+  failed_when: false
+
+- name: "Inspect DPDK device-binding status for {{ dpdk_pci_device.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      PCI={{ dpdk_pci_device.key | quote }}
+
+      TOOL=""
+
+      for candidate in dpdk-devbind.py dpdk-devbind; do
+          if command -v "$candidate" >/dev/null 2>&1; then
+              TOOL="$candidate"
+              break
+          fi
+      done
+
+      if [[ -z "$TOOL" ]]; then
+          exit 3
+      fi
+
+      OUTPUT="$("$TOOL" --status-dev net 2>/dev/null || "$TOOL" --status 2>/dev/null || true)"
+
+      LINE="$(printf '%s\n' "$OUTPUT" |
+          grep -E "^${PCI}[[:space:]]" |
+          head -1)"
+
+      if [[ -n "$LINE" ]]; then
+          printf '%s\n' "$LINE"
+          exit 0
+      fi
+
+      exit 1
+    executable: /bin/bash
+  register: _dpdk_pci_devbind
+  changed_when: false
+  failed_when: false
+
+- name: "Read IOMMU group for {{ dpdk_pci_device.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      DEVICE=/sys/bus/pci/devices/{{ dpdk_pci_device.key | quote }}
+
+      if [[ -L "$DEVICE/iommu_group" ]]; then
+          basename "$(readlink -f "$DEVICE/iommu_group")"
+      fi
+    executable: /bin/bash
+  register: _dpdk_pci_iommu
+  changed_when: false
+  failed_when: false
+  when:
+    - _dpdk_pci_stat.stat.exists | d(false)
+
+- name: "Check VFIO group device for {{ dpdk_pci_device.key }}"
+  ansible.builtin.stat:
+    path: "/dev/vfio/{{ _dpdk_pci_iommu.stdout | trim }}"
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: _dpdk_pci_vfio_device
+  when:
+    - _dpdk_pci_stat.stat.exists | d(false)
+    - (_dpdk_pci_driver.stdout | d('') | trim) == 'vfio-pci'
+    - (_dpdk_pci_iommu.stdout | d('') | trim | length) > 0
+
+- name: "Evaluate DPDK PCI device {{ dpdk_pci_device.key }}"
+  ansible.builtin.set_fact:
+    _dpdk_pci_eval:
+      interface: "{{ dpdk_pci_device.value.interface }}"
+      pci: "{{ dpdk_pci_device.key }}"
+      devargs: "{{ dpdk_pci_device.value.devargs }}"
+
+      exists: "{{ _exists }}"
+
+      expected_driver: "{{ _expected_driver }}"
+      actual_driver: "{{ _actual_driver }}"
+      driver_match: "{{ _driver_match }}"
+
+      lspci_driver_in_use: "{{ _lspci_driver_in_use }}"
+      native_kernel_modules: "{{ _native_kernel_modules }}"
+      actual_is_native_kernel_driver: "{{ _actual_is_native }}"
+
+      available_to_dpdk: "{{ _available_to_dpdk }}"
+
+      iommu_group: "{{ _iommu_group }}"
+      vfio_device: "{{ _vfio_device }}"
+      vfio_device_present: "{{ _vfio_device_present }}"
+
+      driverctl_override: "{{ _driverctl_override }}"
+      dpdk_devbind_seen: "{{ _dpdk_devbind_seen }}"
+      dpdk_devbind_line: "{{ _dpdk_devbind_line }}"
+
+      lspci: "{{ _lspci_lines }}"
+
+      failures: "{{ _failures }}"
+      result: "{{ 'failed' if _failures | length > 0 else 'ok' }}"
+  vars:
+    _exists: "{{ _dpdk_pci_stat.stat.exists | d(false) }}"
+
+    _expected_driver: "{{ dpdk_pci_device.value.expected_driver }}"
+
+    _actual_driver: >-
+      {{
+        _dpdk_pci_driver.stdout | d('') | trim
+        if _exists
+        else 'MISSING'
+      }}
+
+    _driver_match: >-
+      {{
+        _exists
+        and _actual_driver != 'UNBOUND'
+        and _actual_driver == _expected_driver
+      }}
+
+    _lspci_lines: "{{ _dpdk_pci_lspci.stdout_lines | d([]) }}"
+
+    _lspci_driver_lines: >-
+      {{
+        _lspci_lines
+        | select('match', '^\s*Kernel driver in use:')
+        | list
+      }}
+
+    _lspci_driver_in_use: >-
+      {{
+        (
+          _lspci_driver_lines[0]
+          | regex_replace(
+              '^\s*Kernel driver in use:\s*',
+              ''
+            )
+          | trim
+        )
+        if _lspci_driver_lines | length > 0
+        else ''
+      }}
+
+    _lspci_module_lines: >-
+      {{
+        _lspci_lines
+        | select('match', '^\s*Kernel modules:')
+        | list
+      }}
+
+    _native_kernel_modules: >-
+      {{
+        (
+          _lspci_module_lines[0]
+          | regex_replace(
+              '^\s*Kernel modules:\s*',
+              ''
+            )
+          | split(',')
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        )
+        if _lspci_module_lines | length > 0
+        else []
+      }}
+
+    _actual_is_native: >-
+      {{
+        _actual_driver in _native_kernel_modules
+      }}
+
+    _iommu_group: "{{ _dpdk_pci_iommu.stdout | d('') | trim }}"
+
+    _vfio_device: >-
+      {{
+        '/dev/vfio/' ~ _iommu_group
+        if _iommu_group | length > 0
+        else ''
+      }}
+
+    _vfio_device_present: >-
+      {{
+        _dpdk_pci_vfio_device.stat.exists | d(false)
+      }}
+
+    _driverctl_override: >-
+      {{
+        _dpdk_pci_driverctl.stdout | d('') | trim
+        if (_dpdk_pci_driverctl.rc | d(3) | int) == 0
+        else ''
+      }}
+
+    _dpdk_devbind_seen: >-
+      {{
+        (_dpdk_pci_devbind.rc | d(3) | int) == 0
+      }}
+
+    _dpdk_devbind_line: >-
+      {{ _dpdk_pci_devbind.stdout | d('') | trim }}
+
+    _available_to_dpdk: >-
+      {{
+        _driver_match
+        and (
+          _expected_driver != 'vfio-pci'
+          or
+          (_iommu_group | length == 0)
+          or
+          _vfio_device_present
+        )
+      }}
+
+    _failures: >-
+      {%- set out = [] -%}
+
+      {%- if not _exists -%}
+
+        {%- set _ = out.append(
+              'PCI device does not exist'
+            ) -%}
+
+      {%- elif _actual_driver == 'UNBOUND' -%}
+
+        {%- set _ = out.append(
+              'PCI device has no driver attached; expected '
+              ~ _expected_driver
+            ) -%}
+
+      {%- elif _actual_driver != _expected_driver -%}
+
+        {%- if _actual_is_native -%}
+          {%- set _ = out.append(
+                'expected driver '
+                ~ _expected_driver
+                ~ ', got native kernel driver '
+                ~ _actual_driver
+              ) -%}
+        {%- else -%}
+          {%- set _ = out.append(
+                'expected driver '
+                ~ _expected_driver
+                ~ ', got '
+                ~ _actual_driver
+              ) -%}
+        {%- endif -%}
+
+      {%- endif -%}
+
+      {%- if
+            _exists
+            and _actual_driver == 'vfio-pci'
+            and _iommu_group | length > 0
+            and not _vfio_device_present
+      -%}
+
+        {%- set _ = out.append(
+              'VFIO group device '
+              ~ _vfio_device
+              ~ ' is missing'
+            ) -%}
+
+      {%- endif -%}
+
+      {{ out }}
+
+- name: "Collect DPDK PCI driver failure for {{ dpdk_pci_device.key }}"
+  ansible.builtin.set_fact:
+    _dpdk_pci_driver_failures: >-
+      {{
+        _dpdk_pci_driver_failures
+        + [
+            dpdk_pci_device.key
+            ~ ': '
+            ~ (_dpdk_pci_eval.failures | join('; '))
+          ]
+      }}
+  when:
+    - _dpdk_pci_eval.result == 'failed'
+
+- name: "Record DPDK PCI driver result for {{ dpdk_pci_device.key }}"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      DPDK PCI driver {{ dpdk_pci_device.key }}
+      on {{ inventory_hostname }}
+    result_value: "{{ _dpdk_pci_eval.result }}"
+    result_comment: "{{ _dpdk_pci_eval }}"

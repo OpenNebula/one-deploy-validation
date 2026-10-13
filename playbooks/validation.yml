@@ -115,6 +115,19 @@
         - validation.run_dpdk_pci_allowlist | d(false)
         - not (_gb_pre | bool)
 
+# Validate PCI driver binding for inventory-defined physical DPDK devices.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [dpdk_pci_driver_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: dpdk-pci-driver-validation
+      when:
+        - validation.run_dpdk_pci_driver_validation | d(false)
+        - not (_gb_pre | bool)
+
+
 # Validate OVS bridge, bond and DPDK interface topology.
 - hosts: "{{ node_group | d('node') }}"
   tags: [ovs_topology_validation]
@@ -381,6 +394,23 @@
         label: "{{ item }}"
       when:
         - hostvars[item].verification_result is defined
+
+    - name: Fold node-host DPDK PCI driver binding results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK PCI driver') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'DPDK PCI driver') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - hostvars[item].verification_result is defined
+
 
     - name: Fold node-host OVS topology verification results into the report
       ansible.builtin.set_fact:

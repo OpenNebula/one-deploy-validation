@@ -1,0 +1,139 @@
+---
+- name: Build DPDK PCI driver validation configuration
+  ansible.builtin.set_fact:
+    _dpdk_pci_driver_config: >-
+      {{
+        dpdk_pci_driver_validation_defaults
+        | combine(
+            (validation | d({})).get('dpdk_pci_driver', {}),
+            recursive=true
+          )
+      }}
+
+- name: Initialize DPDK PCI driver validation
+  ansible.builtin.set_fact:
+    _dpdk_pci_driver_expected: {}
+    _dpdk_pci_driver_failures: []
+
+- name: Derive expected physical DPDK PCI devices from deployment inventory
+  ansible.builtin.set_fact:
+    _dpdk_pci_driver_expected: "{{ _expected }}"
+  vars:
+    _interfaces: >-
+      {{
+        (dpdk_pci_driver_inventory_ovs | d({})).iface
+        | d({})
+      }}
+
+    _expected: >-
+      {%- set out = {} -%}
+
+      {%- for interface_name, interface in _interfaces.items() -%}
+        {%- set ns = namespace(
+              interface_type='',
+              devargs=''
+            )
+        -%}
+
+        {%- for setting in interface.set | d([]) -%}
+          {%- if setting is mapping -%}
+
+            {%- if setting.type is defined -%}
+              {%- set ns.interface_type = setting.type | string -%}
+            {%- endif -%}
+
+            {%- if setting['options:dpdk-devargs'] is defined -%}
+              {%- set ns.devargs =
+                    setting['options:dpdk-devargs'] | string
+              -%}
+            {%- endif -%}
+
+          {%- endif -%}
+        {%- endfor -%}
+
+        {%- if
+              ns.interface_type.startswith('dpdk')
+              and ns.devargs | length > 0
+        -%}
+
+          {%- set raw_pci =
+                ns.devargs.split(',')[0] | trim
+          -%}
+
+          {%- set pci =
+                ('0000:' ~ raw_pci)
+                if raw_pci.count(':') == 1
+                else raw_pci
+          -%}
+
+          {%- if
+                pci
+                is match(
+                  '^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:'
+                  ~ '[01][0-9a-fA-F]\\.[0-7]$'
+                )
+          -%}
+
+            {%- set expected_driver =
+                  _dpdk_pci_driver_config.driver_overrides.get(
+                    pci,
+                    _dpdk_pci_driver_config.default_driver
+                  )
+            -%}
+
+            {%- set _ = out.update({
+                  pci: {
+                    'interface': interface_name,
+                    'devargs': ns.devargs,
+                    'expected_driver': expected_driver
+                  }
+                })
+            -%}
+
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+
+      {{ out }}
+
+- name: Record no inventory-defined DPDK PCI devices
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      DPDK PCI driver binding on {{ inventory_hostname }}
+    result_value: "skipped — no inventory-defined physical DPDK PCI devices"
+    result_comment:
+      default_driver: "{{ _dpdk_pci_driver_config.default_driver }}"
+      driver_overrides: "{{ _dpdk_pci_driver_config.driver_overrides }}"
+  when:
+    - _dpdk_pci_driver_expected | length == 0
+
+- name: Validate inventory-defined DPDK PCI devices
+  ansible.builtin.include_tasks: validate-device.yml
+  loop: "{{ _dpdk_pci_driver_expected | dict2items }}"
+  loop_control:
+    loop_var: dpdk_pci_device
+    label: >-
+      {{ dpdk_pci_device.value.interface }}
+      {{ dpdk_pci_device.key }}
+
+- name: Record DPDK PCI driver binding host summary
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      DPDK PCI driver binding on {{ inventory_hostname }}
+    result_value: >-
+      {{
+        'failed'
+        if _dpdk_pci_driver_failures | length > 0
+        else 'ok'
+      }}
+    result_comment:
+      expected_devices: "{{ _dpdk_pci_driver_expected }}"
+      failures: "{{ _dpdk_pci_driver_failures }}"
+  when:
+    - _dpdk_pci_driver_expected | length > 0

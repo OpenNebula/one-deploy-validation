@@ -23,6 +23,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | Storage benchmark (fio in a test VM) | [docs/storage-benchmark](./docs/storage-benchmark.md) | `validation.run_storage_benchmark` | on | `storage_benchmark` |
 | Network benchmark (host-to-host throughput) | [docs/network-benchmark](./docs/network-benchmark.md) | `validation.run_network_benchmark` | on | `network_benchmark` |
 | DPDK PCI allowlist (inventory/runtime/persistence) | [docs/dpdk-validation](./docs/dpdk-validation.md) | `validation.run_dpdk_pci_allowlist` | off | `dpdk_pci_allowlist` |
+| DPDK PCI driver binding | [docs/dpdk-pci-driver-validation](./docs/dpdk-pci-driver-validation.md) | `validation.run_dpdk_pci_driver_validation` | off | `dpdk_pci_driver_validation` |
 | OVS topology (bridges/bonds/DPDK interfaces) | [docs/ovs-topology-validation](./docs/ovs-topology-validation.md) | `validation.run_ovs_topology_validation` | off | `ovs_topology_validation` |
 | DPDK interface initialization and attachment | [docs/dpdk-interface-init-validation](./docs/dpdk-interface-init-validation.md) | `validation.run_dpdk_interface_init_validation` | off | `dpdk_interface_init_validation` |
 | Vhost-user directories, sockets and ACLs | [docs/vhost-user-validation](./docs/vhost-user-validation.md) | `validation.run_vhost_user_validation` | off | `vhost_user_validation` |

@@ -140,6 +140,26 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_dpdk_pci_allowlist: false
 
+  # TEST CASE NAME: DPDK PCI Driver Binding Validation
+  # DESCRIPTION: Validates that physical PCI devices configured for OVS DPDK
+  # exist and are bound to the expected userspace-compatible driver. Reports
+  # the expected and actual driver, native kernel driver candidates, VFIO
+  # runtime state and optional driverctl/dpdk-devbind diagnostic evidence.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_dpdk_pci_driver_validation: false
+  dpdk_pci_driver:
+    # Conventional OVS-DPDK devices normally use vfio-pci.
+    default_driver: vfio-pci
+
+    # Override individual PCI devices when a deployment intentionally uses
+    # another driver, for example a bifurcated Mellanox PMD using mlx5_core.
+    #
+    # Example:
+    # driver_overrides:
+    #   "0000:81:00.0": mlx5_core
+    driver_overrides: {}
+
+
   # TEST CASE NAME: OVS Topology Validation
   # DESCRIPTION: Validates inventory-defined OVS bridges, ports, bonds and DPDK
   # interfaces against the running Open vSwitch topology. Checks bridge and port

@@ -1,0 +1,92 @@
+---
+- name: Initialize SR-IOV VF count validation
+  ansible.builtin.set_fact:
+    _sriov_vf_count_expected: {}
+    _sriov_vf_count_failures: []
+
+- name: Derive expected SR-IOV PFs from deployment inventory
+  ansible.builtin.set_fact:
+    _sriov_vf_count_expected: >-
+      {{
+        _sriov_vf_count_expected
+        | combine(
+            {
+              _pci: {
+                'pf_name': item.set_name | d(''),
+                'inventory_address': item.address | string,
+                'expected_vfs': item.set_numvfs | int
+              }
+            }
+          )
+      }}
+  vars:
+    _raw_pci: "{{ item.address | string | lower }}"
+    _pci: >-
+      {{
+        '0000:' ~ _raw_pci
+        if _raw_pci is match(
+          '^[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$'
+        )
+        else _raw_pci
+      }}
+  loop: "{{ sriov_vf_count_inventory_pci_devices | d([]) }}"
+  loop_control:
+    label: >-
+      {{
+        item.set_name | d(item.address | d('unknown'))
+      }}
+  when:
+    - item is mapping
+    - item.address is defined
+    - item.set_numvfs is defined
+    - (item.set_numvfs | string) is match('^[0-9]+$')
+    - >-
+      _pci is match(
+        '^[0-9a-f]{4}:[0-9a-f]{2}:[01][0-9a-f]\.[0-7]$'
+      )
+
+- name: Record no inventory-defined SR-IOV PFs
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "SR-IOV VF count on {{ inventory_hostname }}"
+    result_value: skipped
+    result_comment:
+      expected_pfs: {}
+      failures: []
+      reason: no inventory-defined SR-IOV PFs with set_numvfs
+  when:
+    - _sriov_vf_count_expected | length == 0
+
+- name: Validate inventory-defined SR-IOV PFs
+  ansible.builtin.include_tasks: validate-pf.yml
+  loop: "{{ _sriov_vf_count_expected | dict2items }}"
+  loop_control:
+    loop_var: sriov_pf
+    label: >-
+      {{
+        sriov_pf.value.pf_name
+        ~ ' '
+        ~ sriov_pf.key
+      }}
+  when:
+    - _sriov_vf_count_expected | length > 0
+
+- name: Record SR-IOV VF count host summary
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "SR-IOV VF count on {{ inventory_hostname }}"
+    result_value: >-
+      {{
+        'failed'
+        if _sriov_vf_count_failures | length > 0
+        else 'ok'
+      }}
+    result_comment:
+      expected_pfs: "{{ _sriov_vf_count_expected }}"
+      failures: "{{ _sriov_vf_count_failures }}"
+  when:
+    - _sriov_vf_count_expected | length > 0

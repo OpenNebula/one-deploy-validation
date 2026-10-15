@@ -1,0 +1,7 @@
+---
+# Deployment inventory source used to derive SR-IOV PFs.
+#
+# one-deploy defines PCI devices as a list. PF entries that configure
+# SR-IOV contain set_numvfs. Keeping this source overridable allows
+# negative tests without modifying the real deployment inventory.
+sriov_vf_count_inventory_pci_devices: "{{ pci_devices | d([]) }}"

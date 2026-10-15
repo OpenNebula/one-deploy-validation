@@ -160,6 +160,15 @@ validation:
     driver_overrides: {}
 
 
+  # TEST CASE NAME: SR-IOV VF Count Validation
+  # DESCRIPTION: Validates that every inventory-defined SR-IOV Physical
+  # Function exposes exactly the configured number of Virtual Functions.
+  # Reports expected, active and maximum VF counts and verifies generated
+  # VF PCI devices are visible to the operating system.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_sriov_vf_count_validation: false
+
+
   # TEST CASE NAME: OVS Topology Validation
   # DESCRIPTION: Validates inventory-defined OVS bridges, ports, bonds and DPDK
   # interfaces against the running Open vSwitch topology. Checks bridge and port

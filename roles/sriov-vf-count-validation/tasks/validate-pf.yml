@@ -1,0 +1,350 @@
+---
+- name: "Inspect SR-IOV PF {{ sriov_pf.key }}"
+  ansible.builtin.stat:
+    path: "/sys/bus/pci/devices/{{ sriov_pf.key }}"
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: _sriov_pf_stat
+
+- name: "Read active VF count for {{ sriov_pf.key }}"
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/sys/bus/pci/devices/{{ sriov_pf.key }}/sriov_numvfs"
+  register: _sriov_numvfs
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+
+- name: "Read maximum VF count for {{ sriov_pf.key }}"
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/sys/bus/pci/devices/{{ sriov_pf.key }}/sriov_totalvfs"
+  register: _sriov_totalvfs
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+
+- name: "Read PF network interface names for {{ sriov_pf.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      DEVICE=/sys/bus/pci/devices/{{ sriov_pf.key | quote }}
+
+      if [[ -d "$DEVICE/net" ]]; then
+          find "$DEVICE/net" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -type d \
+              -printf '%f\n' \
+              | sort
+      fi
+    executable: /bin/bash
+  register: _sriov_pf_netdevs
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+
+- name: "Read PCI description for {{ sriov_pf.key }}"
+  ansible.builtin.command:
+    argv:
+      - lspci
+      - -Dnn
+      - -s
+      - "{{ sriov_pf.key }}"
+  register: _sriov_pf_lspci
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+
+- name: "Enumerate VF PCI devices for {{ sriov_pf.key }}"
+  ansible.builtin.shell:
+    cmd: |
+      DEVICE=/sys/bus/pci/devices/{{ sriov_pf.key | quote }}
+
+      shopt -s nullglob
+
+      for vf_link in "$DEVICE"/virtfn*; do
+          [[ -L "$vf_link" ]] || continue
+
+          target="$(basename "$(readlink "$vf_link")")"
+
+          if [[ -e "/sys/bus/pci/devices/$target" ]]; then
+              printf '%s\n' "$target"
+          else
+              printf 'MISSING:%s\n' "$target"
+          fi
+      done
+    executable: /bin/bash
+  register: _sriov_vf_enumeration
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+
+- name: "Read ip link state for configured PF name {{ sriov_pf.value.pf_name }}"
+  ansible.builtin.command:
+    argv:
+      - ip
+      - -details
+      - link
+      - show
+      - dev
+      - "{{ sriov_pf.value.pf_name }}"
+  register: _sriov_pf_ip_link
+  changed_when: false
+  failed_when: false
+  when:
+    - _sriov_pf_stat.stat.exists | d(false)
+    - sriov_pf.value.pf_name | length > 0
+
+- name: "Evaluate SR-IOV PF {{ sriov_pf.key }}"
+  ansible.builtin.set_fact:
+    _sriov_pf_eval:
+      pf_name: "{{ sriov_pf.value.pf_name }}"
+      pci: "{{ sriov_pf.key }}"
+      inventory_address: "{{ sriov_pf.value.inventory_address }}"
+
+      exists: "{{ _exists }}"
+
+      expected_vfs: "{{ _expected_vfs }}"
+      actual_vfs: "{{ _actual_vfs }}"
+      maximum_vfs: "{{ _maximum_vfs }}"
+
+      numvfs_readable: "{{ _numvfs_readable }}"
+      totalvfs_readable: "{{ _totalvfs_readable }}"
+
+      count_match: "{{ _count_match }}"
+      expected_within_maximum: "{{ _expected_within_maximum }}"
+
+      pf_netdevs: "{{ _pf_netdevs }}"
+      configured_pf_name_visible: "{{ _configured_pf_name_visible }}"
+
+      vf_sysfs_count: "{{ _vf_sysfs_count }}"
+      vf_enumeration_matches_numvfs: "{{ _vf_enumeration_matches }}"
+      vf_pci_devices: "{{ _vf_pci_devices }}"
+      missing_vf_pci_devices: "{{ _missing_vf_pci_devices }}"
+      all_vf_pci_devices_visible: "{{ _all_vfs_visible }}"
+
+      pci_description: "{{ _sriov_pf_lspci.stdout | d('') | trim }}"
+      ip_link: "{{ _sriov_pf_ip_link.stdout_lines | d([]) }}"
+
+      failures: "{{ _failures }}"
+      result: "{{ 'failed' if _failures | length > 0 else 'ok' }}"
+  vars:
+    _exists: "{{ _sriov_pf_stat.stat.exists | d(false) }}"
+
+    _expected_vfs: "{{ sriov_pf.value.expected_vfs | int }}"
+
+    _numvfs_readable: >-
+      {{
+        _exists
+        and (_sriov_numvfs.rc | d(1) | int) == 0
+        and
+        (
+          _sriov_numvfs.stdout
+          | d('')
+          | trim
+        )
+        is match('^[0-9]+$')
+      }}
+
+    _totalvfs_readable: >-
+      {{
+        _exists
+        and (_sriov_totalvfs.rc | d(1) | int) == 0
+        and
+        (
+          _sriov_totalvfs.stdout
+          | d('')
+          | trim
+        )
+        is match('^[0-9]+$')
+      }}
+
+    _actual_vfs: >-
+      {{
+        (_sriov_numvfs.stdout | trim | int)
+        if _numvfs_readable
+        else none
+      }}
+
+    _maximum_vfs: >-
+      {{
+        (_sriov_totalvfs.stdout | trim | int)
+        if _totalvfs_readable
+        else none
+      }}
+
+    _count_match: >-
+      {{
+        _numvfs_readable
+        and (_actual_vfs | int) == (_expected_vfs | int)
+      }}
+
+    _expected_within_maximum: >-
+      {{
+        _totalvfs_readable
+        and (_expected_vfs | int) <= (_maximum_vfs | int)
+      }}
+
+    _pf_netdevs: "{{ _sriov_pf_netdevs.stdout_lines | d([]) }}"
+
+    _configured_pf_name_visible: >-
+      {{
+        sriov_pf.value.pf_name | length == 0
+        or sriov_pf.value.pf_name in _pf_netdevs
+      }}
+
+    _vf_entries: "{{ _sriov_vf_enumeration.stdout_lines | d([]) }}"
+
+    _vf_pci_devices: >-
+      {{
+        _vf_entries
+        | reject('match', '^MISSING:')
+        | list
+      }}
+
+    _missing_vf_pci_devices: >-
+      {{
+        _vf_entries
+        | select('match', '^MISSING:')
+        | map('regex_replace', '^MISSING:', '')
+        | list
+      }}
+
+    _vf_sysfs_count: "{{ _vf_entries | length }}"
+
+    _vf_enumeration_matches: >-
+      {{
+        _numvfs_readable
+        and (_vf_sysfs_count | int) == (_actual_vfs | int)
+      }}
+
+    _all_vfs_visible: >-
+      {{
+        _vf_enumeration_matches
+        and _missing_vf_pci_devices | length == 0
+      }}
+
+    _failures: >-
+      {%- set out = [] -%}
+
+      {%- if not _exists -%}
+
+        {%- set _ = out.append(
+              'SR-IOV PF PCI device does not exist'
+            ) -%}
+
+      {%- else -%}
+
+        {%- if not _numvfs_readable -%}
+          {%- set _ = out.append(
+                'sriov_numvfs cannot be read'
+              ) -%}
+        {%- endif -%}
+
+        {%- if not _totalvfs_readable -%}
+          {%- set _ = out.append(
+                'sriov_totalvfs cannot be read'
+              ) -%}
+        {%- endif -%}
+
+        {%- if
+              _numvfs_readable
+              and (_actual_vfs | int) != (_expected_vfs | int)
+        -%}
+          {%- set _ = out.append(
+                'expected '
+                ~ (_expected_vfs | string)
+                ~ ' VFs, actual '
+                ~ (_actual_vfs | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if
+              _totalvfs_readable
+              and (_expected_vfs | int) > (_maximum_vfs | int)
+        -%}
+          {%- set _ = out.append(
+                'expected VF count '
+                ~ (_expected_vfs | string)
+                ~ ' exceeds maximum supported VF count '
+                ~ (_maximum_vfs | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if
+              _numvfs_readable
+              and _totalvfs_readable
+              and (_actual_vfs | int) > (_maximum_vfs | int)
+        -%}
+          {%- set _ = out.append(
+                'actual VF count '
+                ~ (_actual_vfs | string)
+                ~ ' exceeds reported maximum '
+                ~ (_maximum_vfs | string)
+              ) -%}
+        {%- endif -%}
+
+        {%- if
+              _numvfs_readable
+              and (_vf_sysfs_count | int) != (_actual_vfs | int)
+        -%}
+          {%- set _ = out.append(
+                'sriov_numvfs reports '
+                ~ (_actual_vfs | string)
+                ~ ' but only '
+                ~ (_vf_sysfs_count | string)
+                ~ ' virtfn PCI entries are present'
+              ) -%}
+        {%- endif -%}
+
+        {%- if _missing_vf_pci_devices | length > 0 -%}
+          {%- set _ = out.append(
+                'VF PCI devices missing from OS PCI enumeration: '
+                ~ (_missing_vf_pci_devices | join(', '))
+              ) -%}
+        {%- endif -%}
+
+      {%- endif -%}
+
+      {{ out }}
+
+- name: "Collect SR-IOV VF count failure for {{ sriov_pf.key }}"
+  ansible.builtin.set_fact:
+    _sriov_vf_count_failures: >-
+      {{
+        _sriov_vf_count_failures
+        + [
+            (
+              sriov_pf.value.pf_name
+              | d(sriov_pf.key, true)
+            )
+            ~ ' ('
+            ~ sriov_pf.key
+            ~ '): '
+            ~ (_sriov_pf_eval.failures | join('; '))
+          ]
+      }}
+  when:
+    - _sriov_pf_eval.result == 'failed'
+
+- name: "Record SR-IOV VF count result for {{ sriov_pf.key }}"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      SR-IOV VF count
+      {{ sriov_pf.value.pf_name | d(sriov_pf.key, true) }}
+      ({{ sriov_pf.key }})
+      on {{ inventory_hostname }}
+    result_value: "{{ _sriov_pf_eval.result }}"
+    result_comment: "{{ _sriov_pf_eval }}"

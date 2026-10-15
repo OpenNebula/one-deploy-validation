@@ -128,6 +128,19 @@
         - not (_gb_pre | bool)
 
 
+# Validate SR-IOV VF counts on inventory-defined Physical Functions.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [sriov_vf_count_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: sriov-vf-count-validation
+      when:
+        - validation.run_sriov_vf_count_validation | d(false)
+        - not (_gb_pre | bool)
+
+
 # Validate OVS bridge, bond and DPDK interface topology.
 - hosts: "{{ node_group | d('node') }}"
   tags: [ovs_topology_validation]
@@ -405,6 +418,23 @@
           {{ (report_verification_comments | default({}))
              | combine(hostvars[item].verification_comments | default({}) | dict2items
                        | selectattr('key', 'search', 'DPDK PCI driver') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - hostvars[item].verification_result is defined
+
+
+    - name: Fold node-host SR-IOV VF count verification results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'SR-IOV VF count') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'SR-IOV VF count') | items2dict) }}
       loop: "{{ groups[node_group | d('node')] }}"
       loop_control:
         label: "{{ item }}"

@@ -866,6 +866,8 @@
      'prefixes': ['DPDK PCI allowlist']},
     {'label': 'DPDK PCI driver binding', 'flag': validation_vars.run_dpdk_pci_driver_validation | default(false),
      'prefixes': ['DPDK PCI driver']},
+    {'label': 'SR-IOV VF count', 'flag': validation_vars.run_sriov_vf_count_validation | default(false),
+     'prefixes': ['SR-IOV VF count']},
     {'label': 'OVS topology',        'flag': validation_vars.run_ovs_topology_validation | default(false),
      'prefixes': ['OVS topology']},
     {'label': 'DPDK interface init', 'flag': validation_vars.run_dpdk_interface_init_validation | default(false),

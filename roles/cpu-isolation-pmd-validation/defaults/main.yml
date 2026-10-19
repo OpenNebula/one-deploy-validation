@@ -1,0 +1,18 @@
+---
+# Optional inventory-source overrides used by synthetic negative tests.
+# When null, the role reads the real deployment inventory from hostvars.
+cpu_isolation_pmd_inventory_ovs_set_override: null
+cpu_isolation_pmd_inventory_kernel_params_override: null
+
+cpu_isolation_pmd_validation_defaults:
+  require_single_numa: false
+
+  # Additional reserved CPU roles that PMD CPUs must not overlap.
+  #
+  # Example:
+  #
+  # prohibited_cpu_sets:
+  #   emulator: "2-3"
+  #   storage: "8-9"
+  #
+  prohibited_cpu_sets: {}

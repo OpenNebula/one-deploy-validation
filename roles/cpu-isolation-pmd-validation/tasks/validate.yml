@@ -1,0 +1,857 @@
+---
+- name: Build CPU isolation and PMD validation configuration
+  ansible.builtin.set_fact:
+    _cpu_pmd_validation_config: >-
+      {{
+        cpu_isolation_pmd_validation_defaults
+        | combine(
+            validation.cpu_isolation_pmd | d({}),
+            recursive=true
+          )
+      }}
+    _cpu_pmd_expected_mask: ""
+    _cpu_pmd_expected_isolcpus: ""
+    _cpu_pmd_inventory_ovs_set: >-
+      {{
+        cpu_isolation_pmd_inventory_ovs_set_override
+        if cpu_isolation_pmd_inventory_ovs_set_override is not none
+        else (
+          (hostvars[inventory_hostname].ovs | d({})).set
+          | d([])
+        )
+      }}
+    _cpu_pmd_inventory_kernel_params: >-
+      {{
+        cpu_isolation_pmd_inventory_kernel_params_override
+        if cpu_isolation_pmd_inventory_kernel_params_override is not none
+        else (
+          hostvars[inventory_hostname].kernel_params
+          | d([])
+        )
+      }}
+
+- name: Derive expected PMD mask from deployment inventory
+  ansible.builtin.set_fact:
+    _cpu_pmd_expected_mask: >-
+      {{
+        item['other_config:pmd-cpu-mask']
+        | string
+      }}
+  loop: "{{ _cpu_pmd_inventory_ovs_set }}"
+  loop_control:
+    label: >-
+      {{
+        item['other_config:pmd-cpu-mask']
+        | d('OVS option')
+      }}
+  when:
+    - item is mapping
+    - item['other_config:pmd-cpu-mask'] is defined
+
+- name: Derive expected isolated CPUs from deployment inventory
+  ansible.builtin.set_fact:
+    _cpu_pmd_expected_isolcpus: >-
+      {{
+        item.isolcpus
+        | string
+      }}
+  loop: "{{ _cpu_pmd_inventory_kernel_params }}"
+  loop_control:
+    label: >-
+      {{
+        item.isolcpus
+        | d('kernel parameter')
+      }}
+  when:
+    - item is mapping
+    - item.isolcpus is defined
+    - item.managed | d(true) | bool
+
+- name: Collect and evaluate CPU isolation and OVS PMD placement
+  ansible.builtin.shell:
+    cmd: |
+      python3 - <<'PY'
+      import glob
+      import json
+      import os
+      import re
+      import subprocess
+
+
+      def run(args):
+          try:
+              p = subprocess.run(
+                  args,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+                  check=False,
+              )
+              return {
+                  "rc": p.returncode,
+                  "stdout": p.stdout.strip(),
+                  "stderr": p.stderr.strip(),
+              }
+          except Exception as exc:
+              return {
+                  "rc": 127,
+                  "stdout": "",
+                  "stderr": str(exc),
+              }
+
+
+      def parse_cpulist(value):
+          cpus = set()
+
+          if value is None:
+              return cpus
+
+          value = str(value).strip()
+
+          if not value:
+              return cpus
+
+          for part in value.split(","):
+              part = part.strip()
+
+              # isolcpus may contain flags such as:
+              # domain,managed_irq,1-3
+              if not part:
+                  continue
+
+              if re.fullmatch(r"\d+", part):
+                  cpus.add(int(part))
+                  continue
+
+              match = re.fullmatch(r"(\d+)-(\d+)", part)
+
+              if match:
+                  first = int(match.group(1))
+                  last = int(match.group(2))
+
+                  if last >= first:
+                      cpus.update(range(first, last + 1))
+
+          return cpus
+
+
+      def decode_mask(value):
+          value = str(value or "").strip().strip('"').strip("'")
+
+          if not value:
+              return set()
+
+          number = int(value, 16)
+
+          return {
+              bit
+              for bit in range(number.bit_length())
+              if number & (1 << bit)
+          }
+
+
+      def sorted_list(values):
+          return sorted(int(x) for x in values)
+
+
+      expected_mask_raw = os.environ.get("EXPECTED_PMD_MASK", "")
+      expected_isolcpus_raw = os.environ.get("EXPECTED_ISOLCPUS", "")
+      require_single_numa = (
+          os.environ.get("REQUIRE_SINGLE_NUMA", "false").lower()
+          == "true"
+      )
+
+      try:
+          prohibited_raw = json.loads(
+              os.environ.get("PROHIBITED_CPU_SETS", "{}")
+          )
+      except Exception:
+          prohibited_raw = {}
+
+      failures = []
+
+      # ---------------------------------------------------------------
+      # Inventory expectation
+      # ---------------------------------------------------------------
+
+      expected_mask_valid = True
+
+      try:
+          expected_pmd_cpus = decode_mask(expected_mask_raw)
+      except Exception:
+          expected_mask_valid = False
+          expected_pmd_cpus = set()
+
+      explicit_expected_isolated_cpus = parse_cpulist(
+          expected_isolcpus_raw
+      )
+
+      if expected_isolcpus_raw.strip():
+          expected_isolated_cpus = (
+              explicit_expected_isolated_cpus
+          )
+          isolation_expectation_source = (
+              "kernel_params:isolcpus"
+          )
+      elif expected_mask_raw.strip() and expected_mask_valid:
+          expected_isolated_cpus = set(
+              expected_pmd_cpus
+          )
+          isolation_expectation_source = (
+              "pmd-cpu-mask"
+          )
+      else:
+          expected_isolated_cpus = set()
+          isolation_expectation_source = (
+              "unavailable"
+          )
+
+      # ---------------------------------------------------------------
+      # Host CPU topology
+      # ---------------------------------------------------------------
+
+      possible_raw = ""
+      present_raw = ""
+      online_raw = ""
+      effective_isolated_raw = ""
+
+      def read_text(path):
+          try:
+              with open(path) as f:
+                  return f.read().strip()
+          except Exception:
+              return ""
+
+      possible_raw = read_text(
+          "/sys/devices/system/cpu/possible"
+      )
+      present_raw = read_text(
+          "/sys/devices/system/cpu/present"
+      )
+      online_raw = read_text(
+          "/sys/devices/system/cpu/online"
+      )
+      effective_isolated_raw = read_text(
+          "/sys/devices/system/cpu/isolated"
+      )
+
+      possible_cpus = parse_cpulist(possible_raw)
+      present_cpus = parse_cpulist(present_raw)
+      online_cpus = parse_cpulist(online_raw)
+      effective_isolated_cpus = parse_cpulist(
+          effective_isolated_raw
+      )
+
+      # ---------------------------------------------------------------
+      # Kernel command line
+      # ---------------------------------------------------------------
+
+      cmdline = read_text("/proc/cmdline")
+
+      cmdline_isolcpus_raw = ""
+
+      for token in cmdline.split():
+          if token.startswith("isolcpus="):
+              cmdline_isolcpus_raw = token.split("=", 1)[1]
+              break
+
+      cmdline_isolated_cpus = parse_cpulist(
+          cmdline_isolcpus_raw
+      )
+
+      # ---------------------------------------------------------------
+      # CPU/NUMA topology
+      # ---------------------------------------------------------------
+
+      topology = {}
+
+      lscpu = run([
+          "lscpu",
+          "-p=CPU,NODE,SOCKET,CORE",
+      ])
+
+      if lscpu["rc"] == 0:
+          for line in lscpu["stdout"].splitlines():
+              if not line or line.startswith("#"):
+                  continue
+
+              fields = line.split(",")
+
+              if len(fields) < 4:
+                  continue
+
+              try:
+                  cpu = int(fields[0])
+              except ValueError:
+                  continue
+
+              topology[cpu] = {
+                  "node": int(fields[1])
+                  if fields[1] not in ("", "-")
+                  else None,
+                  "socket": int(fields[2])
+                  if fields[2] not in ("", "-")
+                  else None,
+                  "core": int(fields[3])
+                  if fields[3] not in ("", "-")
+                  else None,
+              }
+
+      expected_pmd_numa_nodes = sorted({
+          topology[cpu]["node"]
+          for cpu in expected_pmd_cpus
+          if cpu in topology
+          and topology[cpu]["node"] is not None
+      })
+
+      # ---------------------------------------------------------------
+      # OVS configured PMD mask
+      # ---------------------------------------------------------------
+
+      ovs_mask_cmd = run([
+          "ovs-vsctl",
+          "get",
+          "Open_vSwitch",
+          ".",
+          "other_config:pmd-cpu-mask",
+      ])
+
+      actual_ovs_mask_raw = ovs_mask_cmd["stdout"]
+      actual_ovs_mask_clean = (
+          actual_ovs_mask_raw
+          .strip()
+          .strip('"')
+          .strip("'")
+      )
+
+      actual_mask_valid = True
+
+      try:
+          actual_ovs_pmd_cpus = decode_mask(
+              actual_ovs_mask_clean
+          )
+      except Exception:
+          actual_mask_valid = False
+          actual_ovs_pmd_cpus = set()
+
+      # ---------------------------------------------------------------
+      # OVS PMD runtime view
+      # ---------------------------------------------------------------
+
+      pmd_rxq = run([
+          "ovs-appctl",
+          "dpif-netdev/pmd-rxq-show",
+      ])
+
+      runtime_pmd_cores = set()
+
+      if pmd_rxq["rc"] == 0:
+          for line in pmd_rxq["stdout"].splitlines():
+              match = re.search(
+                  r"pmd thread .* core_id\s+(\d+):",
+                  line,
+              )
+
+              if match:
+                  runtime_pmd_cores.add(
+                      int(match.group(1))
+                  )
+
+      # ---------------------------------------------------------------
+      # Actual Linux PMD thread affinities
+      # ---------------------------------------------------------------
+
+      pid_result = run(["pidof", "ovs-vswitchd"])
+
+      ovs_pid = None
+
+      if pid_result["rc"] == 0 and pid_result["stdout"]:
+          try:
+              ovs_pid = int(
+                  pid_result["stdout"].split()[0]
+              )
+          except Exception:
+              pass
+
+      pmd_threads = []
+      runtime_affinity_cpus = set()
+      runtime_current_cpus = set()
+
+      if ovs_pid is not None:
+          task_root = f"/proc/{ovs_pid}/task"
+
+          for task_path in sorted(glob.glob(
+              f"{task_root}/*"
+          )):
+              tid = os.path.basename(task_path)
+
+              comm = read_text(
+                  f"{task_path}/comm"
+              )
+
+              if not comm.startswith("pmd-"):
+                  continue
+
+              allowed_raw = ""
+
+              try:
+                  with open(
+                      f"{task_path}/status"
+                  ) as f:
+                      for line in f:
+                          if line.startswith(
+                              "Cpus_allowed_list:"
+                          ):
+                              allowed_raw = (
+                                  line.split(
+                                      ":",
+                                      1,
+                                  )[1].strip()
+                              )
+                              break
+              except Exception:
+                  pass
+
+              allowed_cpus = parse_cpulist(
+                  allowed_raw
+              )
+
+              current_cpu = None
+
+              try:
+                  stat = read_text(
+                      f"{task_path}/stat"
+                  )
+
+                  # Remove PID and "(comm)" fields.
+                  close_paren = stat.rfind(")")
+
+                  if close_paren >= 0:
+                      remainder = stat[
+                          close_paren + 2:
+                      ].split()
+
+                      # Field 39 is processor.
+                      # remainder begins at field 3.
+                      current_cpu = int(
+                          remainder[36]
+                      )
+              except Exception:
+                  current_cpu = None
+
+              runtime_affinity_cpus.update(
+                  allowed_cpus
+              )
+
+              if current_cpu is not None:
+                  runtime_current_cpus.add(
+                      current_cpu
+                  )
+
+              pmd_threads.append({
+                  "tid": int(tid),
+                  "comm": comm,
+                  "allowed_raw": allowed_raw,
+                  "allowed_cpus": sorted_list(
+                      allowed_cpus
+                  ),
+                  "current_cpu": current_cpu,
+              })
+
+      # ---------------------------------------------------------------
+      # Applicability
+      # ---------------------------------------------------------------
+
+      applicable = bool(
+          expected_mask_raw.strip()
+          or actual_ovs_mask_clean
+          or runtime_pmd_cores
+          or pmd_threads
+      )
+
+      # ---------------------------------------------------------------
+      # Validation
+      # ---------------------------------------------------------------
+
+      if applicable:
+          if not expected_mask_raw.strip():
+              failures.append(
+                  "deployment inventory does not define "
+                  "other_config:pmd-cpu-mask"
+              )
+
+          elif not expected_mask_valid:
+              failures.append(
+                  "deployment pmd-cpu-mask is not a valid "
+                  "hexadecimal CPU mask"
+              )
+
+          if expected_mask_valid and expected_pmd_cpus:
+              invalid_expected = (
+                  expected_pmd_cpus - possible_cpus
+              )
+
+              if invalid_expected:
+                  failures.append(
+                      "PMD CPUs do not exist in host topology: "
+                      + ",".join(
+                          str(x)
+                          for x in sorted(
+                              invalid_expected
+                          )
+                      )
+                  )
+
+              offline_expected = (
+                  expected_pmd_cpus - online_cpus
+              )
+
+              if offline_expected:
+                  failures.append(
+                      "PMD CPUs are not online: "
+                      + ",".join(
+                          str(x)
+                          for x in sorted(
+                              offline_expected
+                          )
+                      )
+                  )
+
+          if not expected_isolated_cpus:
+              failures.append(
+                  "deployment CPU isolation expectation "
+                  "is unavailable"
+              )
+
+          if (
+              expected_isolated_cpus
+              and cmdline_isolated_cpus
+              != expected_isolated_cpus
+          ):
+              failures.append(
+                  "kernel command line isolated CPUs do not "
+                  "match deployment configuration"
+              )
+
+          if (
+              expected_isolated_cpus
+              and effective_isolated_cpus
+              != expected_isolated_cpus
+          ):
+              failures.append(
+                  "effective isolated CPU set does not match "
+                  "deployment configuration"
+              )
+
+          if (
+              expected_pmd_cpus
+              and not expected_pmd_cpus.issubset(
+                  expected_isolated_cpus
+              )
+          ):
+              missing = (
+                  expected_pmd_cpus
+                  - expected_isolated_cpus
+              )
+
+              failures.append(
+                  "PMD CPUs are not included in deployment "
+                  "isolcpus set: "
+                  + ",".join(
+                      str(x)
+                      for x in sorted(missing)
+                  )
+              )
+
+          if (
+              expected_pmd_cpus
+              and not expected_pmd_cpus.issubset(
+                  effective_isolated_cpus
+              )
+          ):
+              missing = (
+                  expected_pmd_cpus
+                  - effective_isolated_cpus
+              )
+
+              failures.append(
+                  "PMD CPUs are not effectively isolated: "
+                  + ",".join(
+                      str(x)
+                      for x in sorted(missing)
+                  )
+              )
+
+          if not actual_ovs_mask_clean:
+              failures.append(
+                  "OVS runtime pmd-cpu-mask is missing"
+              )
+
+          elif not actual_mask_valid:
+              failures.append(
+                  "OVS runtime pmd-cpu-mask is invalid"
+              )
+
+          elif (
+              expected_mask_raw.strip()
+              and expected_mask_valid
+              and expected_pmd_cpus
+              != actual_ovs_pmd_cpus
+          ):
+              failures.append(
+                  "OVS PMD CPU mask does not match "
+                  "deployment configuration"
+              )
+
+          if (
+              expected_pmd_cpus
+              and runtime_pmd_cores
+              != expected_pmd_cpus
+          ):
+              failures.append(
+                  "OVS PMD runtime core set does not match "
+                  "expected PMD CPUs"
+              )
+
+          if (
+              expected_pmd_cpus
+              and runtime_affinity_cpus
+              != expected_pmd_cpus
+          ):
+              failures.append(
+                  "Linux PMD thread affinity does not match "
+                  "expected PMD CPUs"
+              )
+
+          for thread in pmd_threads:
+              allowed = set(
+                  thread["allowed_cpus"]
+              )
+
+              if len(allowed) != 1:
+                  failures.append(
+                      "PMD thread "
+                      + str(thread["tid"])
+                      + " is not pinned to exactly one CPU"
+                  )
+
+              unexpected = set()
+
+              if (
+                  expected_mask_raw.strip()
+                  and expected_mask_valid
+              ):
+                  unexpected = (
+                      allowed - expected_pmd_cpus
+                  )
+
+              if unexpected:
+                  failures.append(
+                      "PMD thread "
+                      + str(thread["tid"])
+                      + " can run on non-designated CPUs: "
+                      + ",".join(
+                          str(x)
+                          for x in sorted(unexpected)
+                      )
+                  )
+
+              current_cpu = thread["current_cpu"]
+
+              if (
+                  current_cpu is not None
+                  and expected_mask_raw.strip()
+                  and expected_mask_valid
+                  and current_cpu
+                  not in expected_pmd_cpus
+              ):
+                  failures.append(
+                      "PMD thread "
+                      + str(thread["tid"])
+                      + " is currently running on "
+                      + str(current_cpu)
+                      + ", outside expected PMD CPU set"
+                  )
+
+          if (
+              require_single_numa
+              and len(expected_pmd_numa_nodes) > 1
+          ):
+              failures.append(
+                  "PMD CPUs span multiple NUMA nodes: "
+                  + ",".join(
+                      str(x)
+                      for x in expected_pmd_numa_nodes
+                  )
+              )
+
+          prohibited_results = {}
+
+          for role, cpulist in prohibited_raw.items():
+              reserved = parse_cpulist(
+                  cpulist
+              )
+
+              overlap = (
+                  expected_pmd_cpus
+                  & reserved
+              )
+
+              prohibited_results[role] = {
+                  "configured": str(cpulist),
+                  "cpus": sorted_list(reserved),
+                  "overlap": sorted_list(overlap),
+              }
+
+              if overlap:
+                  failures.append(
+                      "PMD CPUs overlap prohibited role "
+                      + str(role)
+                      + ": "
+                      + ",".join(
+                          str(x)
+                          for x in sorted(overlap)
+                      )
+                  )
+      else:
+          prohibited_results = {}
+
+      result = (
+          "skipped"
+          if not applicable
+          else (
+              "failed"
+              if failures
+              else "ok"
+          )
+      )
+
+      output = {
+          "applicable": applicable,
+          "result": result,
+          "failures": failures,
+
+          "expected_pmd_mask": expected_mask_raw,
+          "expected_pmd_cpus": sorted_list(
+              expected_pmd_cpus
+          ),
+
+          "expected_isolcpus": (
+              expected_isolcpus_raw
+          ),
+          "isolation_expectation_source": (
+              isolation_expectation_source
+          ),
+          "expected_isolated_cpus": sorted_list(
+              expected_isolated_cpus
+          ),
+
+          "kernel_cmdline": cmdline,
+          "cmdline_isolcpus": cmdline_isolcpus_raw,
+          "cmdline_isolated_cpus": sorted_list(
+              cmdline_isolated_cpus
+          ),
+
+          "effective_isolated_raw": (
+              effective_isolated_raw
+          ),
+          "effective_isolated_cpus": sorted_list(
+              effective_isolated_cpus
+          ),
+
+          "cpu_possible": possible_raw,
+          "cpu_possible_count": len(possible_cpus),
+          "cpu_present": present_raw,
+          "cpu_present_count": len(present_cpus),
+          "cpu_online": online_raw,
+          "cpu_online_count": len(online_cpus),
+
+          "actual_ovs_pmd_mask": (
+              actual_ovs_mask_clean
+          ),
+          "actual_ovs_pmd_cpus": sorted_list(
+              actual_ovs_pmd_cpus
+          ),
+
+          "runtime_pmd_cores": sorted_list(
+              runtime_pmd_cores
+          ),
+          "runtime_pmd_affinity_cpus": sorted_list(
+              runtime_affinity_cpus
+          ),
+          "runtime_pmd_current_cpus": sorted_list(
+              runtime_current_cpus
+          ),
+          "pmd_threads": pmd_threads,
+
+          "pmd_numa_nodes": (
+              expected_pmd_numa_nodes
+          ),
+          "cpu_topology": {
+              str(cpu): data
+              for cpu, data in topology.items()
+              if cpu in (
+                  expected_pmd_cpus
+                  | actual_ovs_pmd_cpus
+                  | runtime_affinity_cpus
+              )
+          },
+
+          "require_single_numa": (
+              require_single_numa
+          ),
+          "prohibited_cpu_sets": (
+              prohibited_results
+          ),
+
+          "pmd_rxq_show": (
+              pmd_rxq["stdout"].splitlines()
+          ),
+      }
+
+      print(json.dumps(output))
+      PY
+    executable: /bin/bash
+  environment:
+    EXPECTED_PMD_MASK: "{{ _cpu_pmd_expected_mask }}"
+    EXPECTED_ISOLCPUS: "{{ _cpu_pmd_expected_isolcpus }}"
+    REQUIRE_SINGLE_NUMA: >-
+      {{
+        _cpu_pmd_validation_config.require_single_numa
+        | bool
+        | ternary('true', 'false')
+      }}
+    PROHIBITED_CPU_SETS: >-
+      {{
+        _cpu_pmd_validation_config.prohibited_cpu_sets
+        | d({})
+        | to_json
+      }}
+  register: _cpu_pmd_validation_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse CPU isolation and PMD validation result
+  ansible.builtin.set_fact:
+    _cpu_pmd_validation_result: >-
+      {{
+        _cpu_pmd_validation_raw.stdout
+        | from_json
+      }}
+
+- name: Record CPU isolation and DPDK PMD result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      CPU isolation and DPDK PMD assignment
+      on {{ inventory_hostname }}
+    result_value: >-
+      {{
+        _cpu_pmd_validation_result.result
+      }}
+    result_comment: >-
+      {{
+        _cpu_pmd_validation_result
+      }}

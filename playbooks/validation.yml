@@ -141,6 +141,19 @@
         - not (_gb_pre | bool)
 
 
+# Validate CPU isolation and OVS DPDK PMD CPU placement.
+- hosts: "{{ node_group | d('node') }}"
+  tags: [cpu_isolation_pmd_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: cpu-isolation-pmd-validation
+      when:
+        - validation.run_cpu_isolation_pmd_validation | d(false)
+        - not (_gb_pre | bool)
+
+
 # Validate OVS bridge, bond and DPDK interface topology.
 - hosts: "{{ node_group | d('node') }}"
   tags: [ovs_topology_validation]
@@ -435,6 +448,23 @@
           {{ (report_verification_comments | default({}))
              | combine(hostvars[item].verification_comments | default({}) | dict2items
                        | selectattr('key', 'search', 'SR-IOV VF count') | items2dict) }}
+      loop: "{{ groups[node_group | d('node')] }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - hostvars[item].verification_result is defined
+
+
+    - name: Fold node-host CPU isolation and DPDK PMD verification results into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'search', 'CPU isolation and DPDK PMD assignment') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'search', 'CPU isolation and DPDK PMD assignment') | items2dict) }}
       loop: "{{ groups[node_group | d('node')] }}"
       loop_control:
         label: "{{ item }}"

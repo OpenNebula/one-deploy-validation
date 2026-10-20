@@ -169,6 +169,28 @@ validation:
   run_sriov_vf_count_validation: false
 
 
+  # TEST CASE NAME: CPU Isolation and DPDK PMD CPU Assignment
+  # DESCRIPTION: Validates deployment-defined OVS PMD CPU masks against the
+  # running OVS configuration, PMD runtime placement, Linux thread affinity,
+  # kernel CPU isolation and host CPU/NUMA topology.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_cpu_isolation_pmd_validation: false
+  cpu_isolation_pmd:
+    # Fail when the expected PMD CPU set spans more than one NUMA node.
+    # Multi-NUMA PMD placement can be intentional, so this is disabled
+    # unless the deployment explicitly requires single-NUMA placement.
+    require_single_numa: false
+
+    # Optional CPU sets reserved for other roles. Any overlap with PMD
+    # CPUs causes validation failure.
+    #
+    # Example:
+    # prohibited_cpu_sets:
+    #   emulator: "2-3"
+    #   storage: "8-9"
+    prohibited_cpu_sets: {}
+
+
   # TEST CASE NAME: OVS Topology Validation
   # DESCRIPTION: Validates inventory-defined OVS bridges, ports, bonds and DPDK
   # interfaces against the running Open vSwitch topology. Checks bridge and port

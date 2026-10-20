@@ -25,6 +25,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | DPDK PCI allowlist (inventory/runtime/persistence) | [docs/dpdk-validation](./docs/dpdk-validation.md) | `validation.run_dpdk_pci_allowlist` | off | `dpdk_pci_allowlist` |
 | DPDK PCI driver binding | [docs/dpdk-pci-driver-validation](./docs/dpdk-pci-driver-validation.md) | `validation.run_dpdk_pci_driver_validation` | off | `dpdk_pci_driver_validation` |
 | SR-IOV VF count | [docs/sriov-vf-count-validation](./docs/sriov-vf-count-validation.md) | `validation.run_sriov_vf_count_validation` | off | `sriov_vf_count_validation` |
+| Hugepage configuration and availability | [docs/hugepage-validation](./docs/hugepage-validation.md) | `validation.run_hugepage_validation` | off | `hugepage_validation` |
 | CPU isolation and DPDK PMD assignment | [docs/cpu-isolation-pmd-validation](./docs/cpu-isolation-pmd-validation.md) | `validation.run_cpu_isolation_pmd_validation` | off | `cpu_isolation_pmd_validation` |
 | OVS topology (bridges/bonds/DPDK interfaces) | [docs/ovs-topology-validation](./docs/ovs-topology-validation.md) | `validation.run_ovs_topology_validation` | off | `ovs_topology_validation` |
 | DPDK interface initialization and attachment | [docs/dpdk-interface-init-validation](./docs/dpdk-interface-init-validation.md) | `validation.run_dpdk_interface_init_validation` | off | `dpdk_interface_init_validation` |

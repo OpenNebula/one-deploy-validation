@@ -1,0 +1,5 @@
+---
+# Optional overrides used by synthetic negative tests.
+# When null, use the real deployment inventory.
+hugepage_inventory_kernel_params_override: null
+hugepage_inventory_ovs_set_override: null

@@ -169,6 +169,16 @@ validation:
   run_sriov_vf_count_validation: false
 
 
+  # TEST CASE NAME: Hugepage Configuration and Availability
+  # DESCRIPTION: Validates deployment-defined hugepage size and quantity
+  # against the running kernel, global and NUMA-local hugepage pools,
+  # hugetlbfs mounts and OVS DPDK hugepage configuration. Reports total
+  # and free pages and verifies NUMA nodes required by dpdk-socket-mem
+  # have sufficient hugepage capacity.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_hugepage_validation: false
+
+
   # TEST CASE NAME: CPU Isolation and DPDK PMD CPU Assignment
   # DESCRIPTION: Validates deployment-defined OVS PMD CPU masks against the
   # running OVS configuration, PMD runtime placement, Linux thread affinity,

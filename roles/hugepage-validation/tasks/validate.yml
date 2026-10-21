@@ -1,0 +1,1026 @@
+---
+- name: Resolve hugepage deployment inventory
+  ansible.builtin.set_fact:
+    _hugepage_inventory_kernel_params: >-
+      {{
+        hugepage_inventory_kernel_params_override
+        if hugepage_inventory_kernel_params_override is not none
+        else (
+          hostvars[inventory_hostname].kernel_params
+          | d([])
+        )
+      }}
+    _hugepage_inventory_ovs_set: >-
+      {{
+        hugepage_inventory_ovs_set_override
+        if hugepage_inventory_ovs_set_override is not none
+        else (
+          (
+            hostvars[inventory_hostname].ovs
+            | d({})
+          ).set
+          | d([])
+        )
+      }}
+
+- name: Collect and evaluate hugepage configuration
+  ansible.builtin.shell:
+    cmd: |
+      python3 - <<'PY'
+      import glob
+      import json
+      import math
+      import os
+      import re
+      import subprocess
+
+
+      kernel_params = json.loads(
+          os.environ.get("KERNEL_PARAMS_JSON", "[]")
+      )
+
+      ovs_set = json.loads(
+          os.environ.get("OVS_SET_JSON", "[]")
+      )
+
+
+      def run(args):
+          try:
+              p = subprocess.run(
+                  args,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+                  check=False,
+              )
+              return {
+                  "rc": p.returncode,
+                  "stdout": p.stdout.strip(),
+                  "stderr": p.stderr.strip(),
+              }
+          except Exception as exc:
+              return {
+                  "rc": 127,
+                  "stdout": "",
+                  "stderr": str(exc),
+              }
+
+
+      def read_text(path):
+          try:
+              with open(path) as f:
+                  return f.read().strip()
+          except Exception:
+              return ""
+
+
+      def read_int(path):
+          try:
+              return int(read_text(path))
+          except Exception:
+              return None
+
+
+      def size_to_kb(value):
+          if value is None:
+              return None
+
+          value = str(value).strip()
+
+          match = re.fullmatch(
+              r"(\d+)\s*([kKmMgG]?)",
+              value,
+          )
+
+          if not match:
+              return None
+
+          number = int(match.group(1))
+          suffix = match.group(2).upper()
+
+          multiplier = {
+              "": 1,
+              "K": 1,
+              "M": 1024,
+              "G": 1024 * 1024,
+          }[suffix]
+
+          return number * multiplier
+
+
+      def size_label(kb):
+          if kb is None:
+              return "unknown"
+
+          if kb % (1024 * 1024) == 0:
+              return f"{kb // (1024 * 1024)}G"
+
+          if kb % 1024 == 0:
+              return f"{kb // 1024}M"
+
+          return f"{kb}K"
+
+
+      def clean_ovs_value(value):
+          return (
+              str(value or "")
+              .strip()
+              .strip('"')
+              .strip("'")
+          )
+
+
+      # -------------------------------------------------------
+      # Inventory kernel hugepage configuration
+      # -------------------------------------------------------
+
+      expected_default_size_raw = None
+      expected_default_size_kb = None
+
+      current_size_raw = None
+      current_size_kb = None
+
+      expected_pools = {}
+      inventory_pairs = []
+
+      for item in kernel_params:
+          if not isinstance(item, dict):
+              continue
+
+          if item.get("managed", True) is False:
+              continue
+
+          if "default_hugepagesz" in item:
+              expected_default_size_raw = str(
+                  item["default_hugepagesz"]
+              )
+              expected_default_size_kb = size_to_kb(
+                  expected_default_size_raw
+              )
+
+          if "hugepagesz" in item:
+              current_size_raw = str(
+                  item["hugepagesz"]
+              )
+              current_size_kb = size_to_kb(
+                  current_size_raw
+              )
+
+          if "hugepages" in item:
+              size_kb = (
+                  current_size_kb
+                  if current_size_kb is not None
+                  else expected_default_size_kb
+              )
+
+              try:
+                  count = int(item["hugepages"])
+              except Exception:
+                  count = None
+
+              if size_kb is not None and count is not None:
+                  expected_pools[size_kb] = count
+
+                  inventory_pairs.append({
+                      "size": size_label(size_kb),
+                      "size_kb": size_kb,
+                      "pages": count,
+                  })
+
+
+      # -------------------------------------------------------
+      # Inventory OVS DPDK hugepage configuration
+      # -------------------------------------------------------
+
+      expected_dpdk_socket_mem = ""
+      expected_dpdk_hugepage_dir = ""
+      expected_dpdk_init = ""
+
+      for item in ovs_set:
+          if not isinstance(item, dict):
+              continue
+
+          if "other_config:dpdk-socket-mem" in item:
+              expected_dpdk_socket_mem = clean_ovs_value(
+                  item["other_config:dpdk-socket-mem"]
+              )
+
+          if "other_config:dpdk-hugepage-dir" in item:
+              expected_dpdk_hugepage_dir = clean_ovs_value(
+                  item["other_config:dpdk-hugepage-dir"]
+              )
+
+          if "other_config:dpdk-init" in item:
+              expected_dpdk_init = clean_ovs_value(
+                  item["other_config:dpdk-init"]
+              )
+
+
+      socket_mem_mb = []
+
+      if expected_dpdk_socket_mem:
+          for value in expected_dpdk_socket_mem.split(","):
+              try:
+                  socket_mem_mb.append(
+                      int(value.strip())
+                  )
+              except Exception:
+                  socket_mem_mb.append(None)
+
+
+      # -------------------------------------------------------
+      # Runtime /proc/meminfo
+      # -------------------------------------------------------
+
+      proc_meminfo = {}
+
+      for line in read_text("/proc/meminfo").splitlines():
+          if ":" not in line:
+              continue
+
+          key, value = line.split(":", 1)
+
+          if key.startswith("Huge") or key == "Hugetlb":
+              proc_meminfo[key] = value.strip()
+
+      runtime_default_size_kb = None
+
+      hugepagesize_value = proc_meminfo.get(
+          "Hugepagesize",
+          "",
+      )
+
+      match = re.match(
+          r"(\d+)\s+kB",
+          hugepagesize_value,
+      )
+
+      if match:
+          runtime_default_size_kb = int(
+              match.group(1)
+          )
+
+
+      # -------------------------------------------------------
+      # Runtime global hugepage pools
+      # -------------------------------------------------------
+
+      global_pools = {}
+
+      for path in glob.glob(
+          "/sys/kernel/mm/hugepages/hugepages-*kB"
+      ):
+          match = re.search(
+              r"hugepages-(\d+)kB$",
+              path,
+          )
+
+          if not match:
+              continue
+
+          size_kb = int(match.group(1))
+
+          global_pools[size_kb] = {
+              "size": size_label(size_kb),
+              "size_kb": size_kb,
+              "total_pages": read_int(
+                  os.path.join(
+                      path,
+                      "nr_hugepages",
+                  )
+              ),
+              "free_pages": read_int(
+                  os.path.join(
+                      path,
+                      "free_hugepages",
+                  )
+              ),
+              "reserved_pages": read_int(
+                  os.path.join(
+                      path,
+                      "resv_hugepages",
+                  )
+              ),
+              "surplus_pages": read_int(
+                  os.path.join(
+                      path,
+                      "surplus_hugepages",
+                  )
+              ),
+          }
+
+
+      # -------------------------------------------------------
+      # Runtime NUMA hugepage pools
+      # -------------------------------------------------------
+
+      numa_nodes = {}
+
+      for node_path in glob.glob(
+          "/sys/devices/system/node/node[0-9]*"
+      ):
+          match = re.search(
+              r"node(\d+)$",
+              node_path,
+          )
+
+          if not match:
+              continue
+
+          node_id = int(match.group(1))
+
+          node = {
+              "node": node_id,
+              "cpulist": read_text(
+                  os.path.join(
+                      node_path,
+                      "cpulist",
+                  )
+              ),
+              "pools": {},
+          }
+
+          for hp_path in glob.glob(
+              os.path.join(
+                  node_path,
+                  "hugepages",
+                  "hugepages-*kB",
+              )
+          ):
+              hp_match = re.search(
+                  r"hugepages-(\d+)kB$",
+                  hp_path,
+              )
+
+              if not hp_match:
+                  continue
+
+              size_kb = int(
+                  hp_match.group(1)
+              )
+
+              node["pools"][size_kb] = {
+                  "size": size_label(size_kb),
+                  "size_kb": size_kb,
+                  "total_pages": read_int(
+                      os.path.join(
+                          hp_path,
+                          "nr_hugepages",
+                      )
+                  ),
+                  "free_pages": read_int(
+                      os.path.join(
+                          hp_path,
+                          "free_hugepages",
+                      )
+                  ),
+                  "surplus_pages": read_int(
+                      os.path.join(
+                          hp_path,
+                          "surplus_hugepages",
+                      )
+                  ),
+              }
+
+          numa_nodes[node_id] = node
+
+
+      # -------------------------------------------------------
+      # Kernel command-line hugepage configuration
+      # -------------------------------------------------------
+
+      cmdline = read_text("/proc/cmdline")
+
+      cmdline_default_sizes = []
+      cmdline_pool_sizes = []
+      cmdline_counts = {}
+
+      cmdline_current_size_kb = None
+      cmdline_default_size_kb = None
+
+      for token in cmdline.split():
+          if token.startswith(
+              "default_hugepagesz="
+          ):
+              raw = token.split("=", 1)[1]
+              kb = size_to_kb(raw)
+
+              if kb is not None:
+                  cmdline_default_sizes.append(kb)
+                  cmdline_default_size_kb = kb
+
+          elif token.startswith(
+              "hugepagesz="
+          ):
+              raw = token.split("=", 1)[1]
+              kb = size_to_kb(raw)
+
+              if kb is not None:
+                  cmdline_pool_sizes.append(kb)
+                  cmdline_current_size_kb = kb
+
+          elif token.startswith("hugepages="):
+              try:
+                  count = int(
+                      token.split("=", 1)[1]
+                  )
+              except Exception:
+                  continue
+
+              size_kb = (
+                  cmdline_current_size_kb
+                  if cmdline_current_size_kb is not None
+                  else cmdline_default_size_kb
+              )
+
+              if size_kb is not None:
+                  cmdline_counts.setdefault(
+                      size_kb,
+                      [],
+                  ).append(count)
+
+
+      # -------------------------------------------------------
+      # Runtime OVS configuration
+      # -------------------------------------------------------
+
+      ovs_runtime = {}
+
+      for key in (
+          "other_config:dpdk-init",
+          "other_config:dpdk-socket-mem",
+          "other_config:dpdk-hugepage-dir",
+      ):
+          result = run([
+              "ovs-vsctl",
+              "get",
+              "Open_vSwitch",
+              ".",
+              key,
+          ])
+
+          ovs_runtime[key] = (
+              clean_ovs_value(
+                  result["stdout"]
+              )
+              if result["rc"] == 0
+              else ""
+          )
+
+      initialized = run([
+          "ovs-vsctl",
+          "get",
+          "Open_vSwitch",
+          ".",
+          "dpdk_initialized",
+      ])
+
+      ovs_runtime["dpdk_initialized"] = (
+          clean_ovs_value(
+              initialized["stdout"]
+          )
+          if initialized["rc"] == 0
+          else ""
+      )
+
+
+      # -------------------------------------------------------
+      # Expected hugetlbfs mount
+      # -------------------------------------------------------
+
+      mount_info = {
+          "expected_path": expected_dpdk_hugepage_dir,
+          "path_exists": False,
+          "target": "",
+          "fstype": "",
+          "options": "",
+          "exact_mountpoint": False,
+          "configured_pagesize_kb": None,
+          "effective_pagesize_kb": None,
+      }
+
+      if expected_dpdk_hugepage_dir:
+          mount_info["path_exists"] = os.path.exists(
+              expected_dpdk_hugepage_dir
+          )
+
+          findmnt = run([
+              "findmnt",
+              "-n",
+              "-T",
+              expected_dpdk_hugepage_dir,
+              "-o",
+              "TARGET,FSTYPE,OPTIONS",
+          ])
+
+          if findmnt["rc"] == 0 and findmnt["stdout"]:
+              fields = findmnt["stdout"].split(
+                  None,
+                  2,
+              )
+
+              if len(fields) >= 1:
+                  mount_info["target"] = fields[0]
+
+              if len(fields) >= 2:
+                  mount_info["fstype"] = fields[1]
+
+              if len(fields) >= 3:
+                  mount_info["options"] = fields[2]
+
+              mount_info["exact_mountpoint"] = (
+                  mount_info["target"]
+                  == expected_dpdk_hugepage_dir
+              )
+
+              for option in (
+                  mount_info["options"].split(",")
+              ):
+                  if option.startswith(
+                      "pagesize="
+                  ):
+                      raw = option.split(
+                          "=",
+                          1,
+                      )[1]
+
+                      mount_info[
+                          "configured_pagesize_kb"
+                      ] = size_to_kb(raw)
+
+          mount_info["effective_pagesize_kb"] = (
+              mount_info[
+                  "configured_pagesize_kb"
+              ]
+              if mount_info[
+                  "configured_pagesize_kb"
+              ] is not None
+              else runtime_default_size_kb
+          )
+
+
+      # -------------------------------------------------------
+      # Validation
+      # -------------------------------------------------------
+
+      failures = []
+
+      applicable = bool(
+          expected_pools
+          or expected_default_size_kb
+          or expected_dpdk_hugepage_dir
+          or expected_dpdk_socket_mem
+      )
+
+
+      if applicable:
+          # Default hugepage size.
+          if expected_default_size_kb is not None:
+              if (
+                  runtime_default_size_kb
+                  != expected_default_size_kb
+              ):
+                  failures.append(
+                      "default hugepage size mismatch: "
+                      f"expected "
+                      f"{size_label(expected_default_size_kb)}, "
+                      f"actual "
+                      f"{size_label(runtime_default_size_kb)}"
+                  )
+
+              if (
+                  expected_default_size_kb
+                  not in cmdline_default_sizes
+              ):
+                  failures.append(
+                      "kernel command line does not contain "
+                      "the expected default_hugepagesz="
+                      f"{size_label(expected_default_size_kb)}"
+                  )
+
+
+          # Global hugepage pools.
+          for size_kb, expected_total in (
+              expected_pools.items()
+          ):
+              actual_pool = global_pools.get(
+                  size_kb
+              )
+
+              if actual_pool is None:
+                  failures.append(
+                      "expected hugepage pool is missing: "
+                      f"{size_label(size_kb)}"
+                  )
+                  continue
+
+              actual_total = actual_pool[
+                  "total_pages"
+              ]
+
+              if actual_total != expected_total:
+                  failures.append(
+                      "hugepage total mismatch for "
+                      f"{size_label(size_kb)} pages: "
+                      f"expected {expected_total}, "
+                      f"actual {actual_total}"
+                  )
+
+              boot_counts = cmdline_counts.get(
+                  size_kb,
+                  [],
+              )
+
+              if not boot_counts:
+                  failures.append(
+                      "kernel command line does not define "
+                      f"hugepages for "
+                      f"{size_label(size_kb)} pages"
+                  )
+              else:
+                  unique_counts = sorted(
+                      set(boot_counts)
+                  )
+
+                  if len(unique_counts) > 1:
+                      failures.append(
+                          "kernel command line contains "
+                          "conflicting hugepage counts for "
+                          f"{size_label(size_kb)} pages: "
+                          + ",".join(
+                              str(x)
+                              for x in boot_counts
+                          )
+                      )
+
+                  if expected_total not in boot_counts:
+                      failures.append(
+                          "kernel command line hugepage "
+                          "count does not match inventory "
+                          f"for {size_label(size_kb)} pages: "
+                          f"expected {expected_total}, "
+                          "configured "
+                          + ",".join(
+                              str(x)
+                              for x in boot_counts
+                          )
+                      )
+
+
+          # OVS runtime values must match inventory.
+          if expected_dpdk_socket_mem:
+              actual = ovs_runtime.get(
+                  "other_config:dpdk-socket-mem",
+                  "",
+              )
+
+              if actual != expected_dpdk_socket_mem:
+                  failures.append(
+                      "OVS dpdk-socket-mem does not match "
+                      "deployment configuration: "
+                      f"expected {expected_dpdk_socket_mem}, "
+                      f"actual {actual or 'missing'}"
+                  )
+
+          if expected_dpdk_hugepage_dir:
+              actual = ovs_runtime.get(
+                  "other_config:dpdk-hugepage-dir",
+                  "",
+              )
+
+              if actual != expected_dpdk_hugepage_dir:
+                  failures.append(
+                      "OVS dpdk-hugepage-dir does not match "
+                      "deployment configuration: "
+                      f"expected "
+                      f"{expected_dpdk_hugepage_dir}, "
+                      f"actual {actual or 'missing'}"
+                  )
+
+
+          # hugetlbfs mount.
+          if expected_dpdk_hugepage_dir:
+              if not mount_info["path_exists"]:
+                  failures.append(
+                      "expected hugepage directory does not "
+                      "exist: "
+                      + expected_dpdk_hugepage_dir
+                  )
+
+              elif (
+                  mount_info["fstype"]
+                  != "hugetlbfs"
+              ):
+                  failures.append(
+                      "expected hugepage directory is not "
+                      "backed by hugetlbfs: "
+                      + expected_dpdk_hugepage_dir
+                  )
+
+              elif not mount_info[
+                  "exact_mountpoint"
+              ]:
+                  failures.append(
+                      "expected hugepage path is not an "
+                      "explicit hugetlbfs mount point: "
+                      + expected_dpdk_hugepage_dir
+                  )
+
+              if (
+                  expected_default_size_kb is not None
+                  and mount_info[
+                      "effective_pagesize_kb"
+                  ] is not None
+                  and mount_info[
+                      "effective_pagesize_kb"
+                  ] != expected_default_size_kb
+              ):
+                  failures.append(
+                      "hugetlbfs page size does not match "
+                      "deployment configuration: "
+                      f"expected "
+                      f"{size_label(expected_default_size_kb)}, "
+                      f"actual "
+                      f"{size_label(mount_info['effective_pagesize_kb'])}"
+                  )
+
+
+          # DPDK NUMA-local capacity.
+          dpdk_numa_requirements = {}
+
+          dpdk_page_size_kb = (
+              expected_default_size_kb
+          )
+
+          if (
+              dpdk_page_size_kb is None
+              and expected_pools
+          ):
+              dpdk_page_size_kb = next(
+                  iter(expected_pools.keys())
+              )
+
+          if (
+              socket_mem_mb
+              and dpdk_page_size_kb is not None
+          ):
+              for node_id, memory_mb in enumerate(
+                  socket_mem_mb
+              ):
+                  if memory_mb is None:
+                      continue
+
+                  if memory_mb <= 0:
+                      continue
+
+                  minimum_pages = int(
+                      math.ceil(
+                          (
+                              memory_mb * 1024
+                          )
+                          / dpdk_page_size_kb
+                      )
+                  )
+
+                  node = numa_nodes.get(
+                      node_id
+                  )
+
+                  actual_total = None
+                  free_pages = None
+
+                  if node is not None:
+                      pool = node[
+                          "pools"
+                      ].get(
+                          dpdk_page_size_kb
+                      )
+
+                      if pool is not None:
+                          actual_total = pool[
+                              "total_pages"
+                          ]
+                          free_pages = pool[
+                              "free_pages"
+                          ]
+
+                  sufficient = (
+                      actual_total is not None
+                      and actual_total
+                      >= minimum_pages
+                  )
+
+                  dpdk_numa_requirements[
+                      node_id
+                  ] = {
+                      "node": node_id,
+                      "expected_dpdk_memory_mb": (
+                          memory_mb
+                      ),
+                      "page_size": size_label(
+                          dpdk_page_size_kb
+                      ),
+                      "page_size_kb": (
+                          dpdk_page_size_kb
+                      ),
+                      "minimum_pages_for_dpdk": (
+                          minimum_pages
+                      ),
+                      "total_pages": actual_total,
+                      "free_pages": free_pages,
+                      "sufficient_total_pages": (
+                          sufficient
+                      ),
+                  }
+
+                  if node is None:
+                      failures.append(
+                          "DPDK requires hugepages on "
+                          f"NUMA node {node_id}, but the "
+                          "NUMA node does not exist"
+                      )
+
+                  elif actual_total is None:
+                      failures.append(
+                          "DPDK requires "
+                          f"{size_label(dpdk_page_size_kb)} "
+                          "hugepages on NUMA node "
+                          f"{node_id}, but the pool is "
+                          "missing"
+                      )
+
+                  elif actual_total < minimum_pages:
+                      failures.append(
+                          "insufficient hugepages on NUMA "
+                          f"node {node_id}: DPDK requires "
+                          f"at least {minimum_pages} "
+                          f"{size_label(dpdk_page_size_kb)} "
+                          f"pages, actual {actual_total}"
+                      )
+
+          else:
+              dpdk_numa_requirements = {}
+
+      else:
+          dpdk_numa_requirements = {}
+
+
+      # -------------------------------------------------------
+      # JSON report
+      # -------------------------------------------------------
+
+      result = (
+          "skipped"
+          if not applicable
+          else (
+              "failed"
+              if failures
+              else "ok"
+          )
+      )
+
+      output = {
+          "applicable": applicable,
+          "result": result,
+          "failures": failures,
+
+          "expected_default_hugepage_size": (
+              size_label(
+                  expected_default_size_kb
+              )
+              if expected_default_size_kb
+              is not None
+              else None
+          ),
+          "expected_default_hugepage_size_kb": (
+              expected_default_size_kb
+          ),
+
+          "runtime_default_hugepage_size": (
+              size_label(
+                  runtime_default_size_kb
+              )
+              if runtime_default_size_kb
+              is not None
+              else None
+          ),
+          "runtime_default_hugepage_size_kb": (
+              runtime_default_size_kb
+          ),
+
+          "inventory_hugepage_pools": (
+              inventory_pairs
+          ),
+
+          "global_hugepage_pools": {
+              size_label(k): v
+              for k, v in sorted(
+                  global_pools.items()
+              )
+          },
+
+          "numa_nodes": {
+              str(node_id): {
+                  "cpulist": node["cpulist"],
+                  "pools": {
+                      size_label(k): v
+                      for k, v in sorted(
+                          node["pools"].items()
+                      )
+                  },
+              }
+              for node_id, node in sorted(
+                  numa_nodes.items()
+              )
+          },
+
+          "expected_dpdk_socket_mem": (
+              expected_dpdk_socket_mem
+          ),
+          "actual_dpdk_socket_mem": (
+              ovs_runtime.get(
+                  "other_config:dpdk-socket-mem",
+                  "",
+              )
+          ),
+
+          "expected_dpdk_hugepage_dir": (
+              expected_dpdk_hugepage_dir
+          ),
+          "actual_dpdk_hugepage_dir": (
+              ovs_runtime.get(
+                  "other_config:dpdk-hugepage-dir",
+                  "",
+              )
+          ),
+
+          "dpdk_initialized": (
+              ovs_runtime.get(
+                  "dpdk_initialized",
+                  "",
+              )
+          ),
+
+          "dpdk_numa_requirements": {
+              str(k): v
+              for k, v in sorted(
+                  dpdk_numa_requirements.items()
+              )
+          },
+
+          "mount": mount_info,
+
+          "proc_meminfo": proc_meminfo,
+
+          "kernel_cmdline": cmdline,
+
+          "kernel_cmdline_hugepage_counts": {
+              size_label(k): v
+              for k, v in sorted(
+                  cmdline_counts.items()
+              )
+          },
+      }
+
+      print(json.dumps(output))
+      PY
+    executable: /bin/bash
+  environment:
+    KERNEL_PARAMS_JSON: >-
+      {{
+        _hugepage_inventory_kernel_params
+        | to_json
+      }}
+    OVS_SET_JSON: >-
+      {{
+        _hugepage_inventory_ovs_set
+        | to_json
+      }}
+  register: _hugepage_validation_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse hugepage validation result
+  ansible.builtin.set_fact:
+    _hugepage_validation_result: >-
+      {{
+        _hugepage_validation_raw.stdout
+        | from_json
+      }}
+
+- name: Record hugepage validation result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      Hugepage configuration and availability
+      on {{ inventory_hostname }}
+    result_value: >-
+      {{
+        _hugepage_validation_result.result
+      }}
+    result_comment: >-
+      {{
+        _hugepage_validation_result
+      }}

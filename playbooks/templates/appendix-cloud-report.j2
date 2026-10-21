@@ -868,6 +868,8 @@
      'prefixes': ['DPDK PCI driver']},
     {'label': 'SR-IOV VF count', 'flag': validation_vars.run_sriov_vf_count_validation | default(false),
      'prefixes': ['SR-IOV VF count']},
+    {'label': 'Hugepages', 'flag': validation_vars.run_hugepage_validation | default(false),
+     'prefixes': ['Hugepage configuration and availability']},
     {'label': 'CPU isolation / PMD', 'flag': validation_vars.run_cpu_isolation_pmd_validation | default(false),
      'prefixes': ['CPU isolation and DPDK PMD assignment']},
     {'label': 'OVS topology',        'flag': validation_vars.run_ovs_topology_validation | default(false),

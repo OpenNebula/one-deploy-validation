@@ -344,6 +344,7 @@ validation:
       expected_group_id: ""
       ldap_group_dn: "cn=opennebula-group,ou=group,dc=example,dc=com"
       ldap_group_member_attr: "memberUid"
+      ldap_group_filter: "(objectClass=posixGroup)"
     fireedge_proto: "http"
     fireedge_login_endpoint: "/fireedge/api/auth/"
     fireedge_skip_tls_verify: true

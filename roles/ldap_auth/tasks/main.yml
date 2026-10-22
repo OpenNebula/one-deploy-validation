@@ -19,7 +19,8 @@
               'expected_group_name': validation.ldap_auth.group_mapping.expected_group_name | default(''),
               'expected_group_id': validation.ldap_auth.group_mapping.expected_group_id | default(''),
               'ldap_group_dn': validation.ldap_auth.group_mapping.ldap_group_dn | default(''),
-              'ldap_group_member_attr': validation.ldap_auth.group_mapping.ldap_group_member_attr | default('memberUid')
+              'ldap_group_member_attr': validation.ldap_auth.group_mapping.ldap_group_member_attr | default('memberUid'),
+              'ldap_group_filter': validation.ldap_auth.group_mapping.ldap_group_filter | default('(objectClass=posixGroup)')
             }, recursive=True),
             'fireedge_host': validation.ldap_auth.fireedge_host | default(''),
             'fireedge_port': validation.ldap_auth.fireedge_port | default(''),
@@ -209,9 +210,35 @@
       when: not (_ldap_creds_ok | bool)
 
     # --- LDAP group membership in the directory (comparison: recorded) ---
+    # Group members are listed either as plain user names (POSIX groups: memberUid) or as
+    # full DNs (Active Directory, groupOfNames/groupOfUniqueNames: member, uniqueMember). The
+    # user's DN is resolved first so that both forms can be matched, and the group object
+    # class comes from ldap_group_filter (default posixGroup; AD: "(objectClass=group)").
+    # -o ldif-wrap=no keeps long DNs on one line.
+    - name: Resolve the LDAP user DN
+      ansible.builtin.shell: >
+        ldapsearch -x -LLL -o ldif-wrap=no -H ldap://{{ _ldap_host }}:{{ _ldap_port }} -D "{{ validation.ldap_auth.bind_dn }}" -w "{{ validation.ldap_auth.bind_pass }}" -b "{{ validation.ldap_auth.base_dn }}" "(|(uid={{ validation.ldap_auth.ldap_user }})(sAMAccountName={{ validation.ldap_auth.ldap_user }})(cn={{ validation.ldap_auth.ldap_user }}))" dn
+      register: ldap_user_dn_lookup
+      no_log: true  # command line embeds bind_pass — keep hidden
+      changed_when: false
+      failed_when: false
+      when:
+        - _ldap_creds_ok | bool
+        - validation.ldap_auth.group_mapping.ldap_group_dn | length > 0
+        - ldap_bind_check.rc == 0
+
+    - name: Set the resolved LDAP user DN
+      ansible.builtin.set_fact:
+        _ldap_user_dn: >-
+          {{ (((ldap_user_dn_lookup.stdout_lines | d([]))
+               | select('match', '(?i)^dn:')
+               | map('regex_replace', '(?i)^dn:\s*', '')
+               | list | first | d('')) | trim)
+             if ((ldap_user_dn_lookup.rc | d(1)) == 0) else '' }}
+
     - name: Read LDAP group membership for user
       ansible.builtin.shell: >
-        ldapsearch -x -H ldap://{{ _ldap_host }}:{{ _ldap_port }} -D "{{ validation.ldap_auth.bind_dn }}" -w "{{ validation.ldap_auth.bind_pass }}" -b "{{ validation.ldap_auth.group_mapping.ldap_group_dn }}" "(objectClass=posixGroup)" {{ validation.ldap_auth.group_mapping.ldap_group_member_attr }}
+        ldapsearch -x -LLL -o ldif-wrap=no -H ldap://{{ _ldap_host }}:{{ _ldap_port }} -D "{{ validation.ldap_auth.bind_dn }}" -w "{{ validation.ldap_auth.bind_pass }}" -b "{{ validation.ldap_auth.group_mapping.ldap_group_dn }}" "{{ validation.ldap_auth.group_mapping.ldap_group_filter }}" {{ validation.ldap_auth.group_mapping.ldap_group_member_attr }}
       register: ldap_group_lookup
       no_log: true  # command line embeds bind_pass — keep hidden
       changed_when: false
@@ -226,9 +253,16 @@
         name: validation_common
         tasks_from: record_result.yml
       vars:
+        # member values of the group, lower-cased: plain names (memberUid) or DNs (member)
+        _member_attr: "{{ validation.ldap_auth.group_mapping.ldap_group_member_attr }}"
+        _member_values: >-
+          {{ ldap_group_lookup.stdout_lines | d([])
+             | select('match', '(?i)^' ~ (_member_attr | regex_escape) ~ ':')
+             | map('regex_replace', '(?i)^' ~ (_member_attr | regex_escape) ~ ':\s*', '')
+             | map('trim') | map('lower') | list }}
         _member_hit: >-
-          {{ (ldap_group_lookup.stdout | d(''))
-             is search(validation.ldap_auth.group_mapping.ldap_group_member_attr ~ ': ' ~ validation.ldap_auth.ldap_user) }}
+          {{ ((validation.ldap_auth.ldap_user | lower) in _member_values)
+             or (((_ldap_user_dn | d('')) | length > 0) and ((_ldap_user_dn | lower) in _member_values)) }}
         _raw_err: "rc={{ ldap_group_lookup.rc | d('?') }} stderr={{ ldap_group_lookup.stderr | d('') | trim }}"
         _san1: "{{ (_raw_err | replace(validation.ldap_auth.bind_pass, '***')) if (validation.ldap_auth.bind_pass | length > 0) else _raw_err }}"
         _san2: "{{ (_san1 | replace(validation.ldap_auth.ldap_pass, '***')) if (validation.ldap_auth.ldap_pass | length > 0) else _san1 }}"

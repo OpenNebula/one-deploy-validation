@@ -1,0 +1,15 @@
+---
+all:
+  vars:
+    ansible_user: root
+
+frontend:
+  hosts:
+    fe1: { ansible_host: 172.20.0.12 }
+    fe2: { ansible_host: 172.20.0.15 }
+    fe3: { ansible_host: 172.20.0.16 }
+
+node:
+  hosts:
+    n1: { ansible_host: 172.20.0.13 }
+    n2: { ansible_host: 172.20.0.14 }

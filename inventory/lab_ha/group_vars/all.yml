@@ -1,0 +1,443 @@
+---
+ansible_python_interpreter: /usr/bin/python3
+
+ansible_user: root
+ensure_keys_for: [root]
+
+ensure_hostname: true
+ensure_hosts: true
+
+unattend_disable: true
+update_pkg_cache: true
+
+one_version: '6.10'
+one_pass: '<oneadmin_password_here>'
+
+# ansible key to use
+ansible_ssh_private_key_file: '<ssh_key>'
+
+validation:
+
+  # MULTI-CLUSTER SUPPORT
+  # Every OpenNebula cluster that has at least one host is validated
+  # automatically: VM-creating tests run once per cluster using only that
+  # cluster's hosts, image datastore and virtual networks. Clusters without
+  # hosts are reported as skipped. No configuration is required; the options
+  # below are optional.
+  #
+  # Restrict validation to specific clusters (default: all clusters with hosts):
+  # clusters: [clusterA, clusterB]
+  #
+  # Per-cluster resource overrides (default: auto-discovered — first image
+  # datastore of the cluster, and the configured/first vnet of the cluster):
+  # cluster_overrides:
+  #   clusterA:
+  #     vnet_name: VLAN_580
+  #     image_ds_id: 101
+  #
+  # Note: narrowing `clusters` on a later run does not clean up test artifacts
+  # created for clusters validated by earlier runs.
+
+  # TEST CASE NAME: Core Services
+  # DESCRIPTION: Check the status of OpenNebula core services, as listed in `service_list`,
+  # also tests the resilience of some of them by restarting. 
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_core_services: true
+  core_services:
+    service_list:
+      - name: opennebula.service
+        desc: OpenNebula core (oned)
+      - name: opennebula-gate.service
+        desc: OpenNebula gate
+      - name: opennebula-flow.service
+        desc: OpenNebula flow
+      # NOTE: Scheduler service is always checked in earlier than 6.99 versions
+      # - name: opennebula-scheduler.service
+      #   desc: OpenNebula Scheduler
+      - name: opennebula-fireedge.service
+        desc: OpenNebula Fireedge GUI
+      # Add other services if more should be checked.
+    check_fireedge_ui: true
+
+  # CLEANUP BEHAVIOR: the suite always removes every resource it created
+  # (VMs, vnets, flow services, exported images/templates, files, packages),
+  # even when tests fail — a final sweep play runs unconditionally and the
+  # report gets an 'Execution & Cleanup Summary' section listing every
+  # resource and its fate. Resources that pre-existed (reused) are never
+  # touched. Set keep_exported_images to keep the marketplace exports
+  # (useful for iterative runs; the vLLM appliance image is multi-GB).
+  cleanup:
+    keep_exported_images: false
+
+  # DEBUG: force a failure inside a given test to exercise the harness
+  # (accepted slugs: test_vm, storage_benchmark, conn_matrix,
+  # network_validation, network_benchmark, vm_ha, fe_ha, ldap_auth,
+  # federation, one_flow, core_services, gpu_benchmark).
+  # Can also be armed per-run without touching this file via the standalone
+  # extra var:  ansible-playbook ... -e odv_fail_in=<slug>
+  # debug:
+  #   fail_in: test_vm
+
+  # TEST CASE NAME: OneFlow Smoke Test (service/state/vms)
+  # DESCRIPTION: Creates and instantiates a temporary OneFlow service, checks its state and
+  # VM count, and reports the result. If the service does not reach RUNNING, the state is
+  # recorded as a comment in the HTML report.
+  # OUTPUT: OneFlow smoke test result and optional failure comment in /tmp/cloud_verification_report.html
+  run_one_flow: true
+ 
+
+  # TEST CASE NAME: Networking subsystem validation
+  # DESCRIPTION: Instantiates a VM at each OpenNebula vNET, checks external connectivity
+  # from the test VM
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  networks_verification: true
+  network:
+    ext_host: 'google.com'
+
+  # TEST CASE NAME: Storage Benchmark
+  # DESCRIPTION: Instantiates a VM for running storage benchmark from it. The VM needs to
+  # have public internet access to install dependencies. The VM's connected network can
+  # be configured.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_storage_benchmark: true
+  storage_benchmark:
+    vnet_name: public
+
+  # TEST CASE NAME: GPU / LLM Benchmark
+  # DESCRIPTION: Discovers NVIDIA GPUs on each cluster's hosts, runs a GPU-health
+  # check (nvidia-smi incl. PCIe link width + cuBLAS per GPU) and a vLLM/GuideLLM
+  # inference benchmark (one 'vLLM Inference Engine' appliance VM per model). Collects metrics,
+  # flags anomalies against GuideLLM SLO thresholds. Requires GPU passthrough
+  # already prepared by one-deploy and (by default) egress to download
+  # models/toolkit. Config lives in the top-level `gpu_benchmark:` block below.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html + raw GuideLLM
+  # JSONs and a summary.json (full results dump, usable as a baseline) under
+  # /tmp/gpu_benchmark/ on the frontend; the per-cluster status also appears in
+  # the report's summary checks table.
+  run_gpu_benchmark: false
+
+  # TEST CASE NAME: Network Benchmark
+  # DESCRIPTION: Runs an iperf bandwidth and ping benchmark between all hypervisor hosts
+  # that are listed in the inventory.
+  # OUTPUT: Ansible execution output in the command line
+  run_network_benchmark: true
+  network_benchmark:
+    iperf_port: 5201
+    iperf_test_time: 10
+
+  # TEST CASE NAME: Connectivity Matrix
+  # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
+  # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing
+  # on the configured bridge) and runs a connectivity test to all other VMs running on
+  # the other hosts.
+  # OUTPUT:
+  #    - Matrix rendered inside the main verification report
+  #    - Raw JSON data at /tmp/conn-matrix-raw-data.json
+  run_conn_matrix: true
+  conn_matrix:
+    bridge_name: br0
+    ping_count: 10
+    vnet_name: public
+    market_name: 'Alpine Linux 3.21'
+
+  # TEST CASE NAME: VM instantiation
+  # DESCRIPTION: Fetches a VM template and image from the OpenNebula Marketplace and instantiates it.
+  # Optionally also instantiates a VNET, attaches it to the VM, and checks connectivity.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_test_vm: true
+  test_vm:
+    vm:
+      check_connection: true
+      market_name: 'Alpine Linux 3.21'
+      template_extra: |
+        MEMORY="512"
+        CONTEXT=[
+          NETWORK="YES",
+          REPORT_READY="YES",
+          SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
+          TOKEN="YES" 
+        ]
+    create_vnet: false
+    vnet_name: 'public'
+    vnet:
+      name: 'public'
+      desc: 'A test network for post-deployment cloud verification'
+      bridge: 'br0'
+      vn_mad: 'bridge'
+      phydev: ''
+      network_address: '192.168.150.0'
+      network_mask: '255.255.255.0'
+      dns: '8.8.8.8'
+      gateway: '192.168.150.1'
+      ar:
+        - type: "IP4"
+          ip: '192.168.150.100'
+          size: '10'
+
+  # TEST CASE NAME: LDAP Authentication
+  # DESCRIPTION: Validates LDAP bind, OpenNebula LDAP auth configuration, LDAP login to XML-RPC,
+  # FireEdge UI login via LDAP, and verifies local auth fallback.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_ldap_auth: false
+  ldap_auth:
+    server: "172.20.0.7:389"
+    base_dn: "dc=example,dc=com"
+    bind_dn: "uid=admin,dc=example,dc=com"
+    bind_pass: "newpassword"
+    ldap_user: "oneuser"
+    ldap_pass: "onepassword"
+    local_user: "oneadmin"
+    local_auth_file: "/var/lib/one/.one/one_auth"
+    group_mapping:
+      expected_group_name: "opennebula-group"
+      expected_group_id: ""
+      ldap_group_dn: "cn=opennebula-group,ou=group,dc=example,dc=com"
+      ldap_group_member_attr: "memberUid"
+    fireedge_proto: "http"
+    fireedge_login_endpoint: "/fireedge/api/auth/"
+    fireedge_skip_tls_verify: true
+    rpc2_proto: "http"
+    rpc2_path: "/RPC2"
+    rpc2_skip_tls_verify: true
+
+  # TEST CASE NAME: VM High Availability
+  # DESCRIPTION: The prerequisite is to have VM HA configured, see details in OpenNebula documentation.
+  # Instantiates a VM and produces an error on its host with a configurable method (e.g. bringing the
+  # main interface down). Checks that the error is detected and the VM is migrated to another host.
+  # NOTE: Blocks the test execution and asks for manual confirmation before the fencing occurs (that will shut
+  # down the host). Does not provide an automatic way to recover the host.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_vm_ha: true
+  vm_ha:
+    produce_error_method: 'if_down'
+    if_down_params:
+      # Lab: monitoring runs over 192.168.150.x on br0 whose port is eth1;
+      # controller SSH uses eth0 and survives the cut.
+      interface_name: 'eth1'
+    fencing_check_retries: 8
+    fencing_check_delay: 60
+    vm_market_name: 'Alpine Linux 3.21'
+    # Set to true for unattended runs: skips the interactive confirmation
+    # pause before the destructive fault injection.
+    auto_confirm: true
+    # Power-on counterpart of the lab fence driver (fence_host.sh): the lab
+    # nodes are VMs on an outer OpenNebula, so un-fencing = resume of the
+    # backing outer VM, resolved BY NAME exactly like the fence script does.
+    # Runs on the first frontend as oneadmin; $ODV_FENCED_HOST is the
+    # OpenNebula host NAME of the fenced node.
+    node_power_on_cmd: |
+      SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
+      OUTER="rpetrescu@192.168.50.11"
+      ID=$(ssh $SSH_OPTS "$OUTER" "sudo -n su - oneadmin -c \"onevm list --csv -l ID,NAME --no-header\"" | awk -F, -v n="$ODV_FENCED_HOST" '$2==n {print $1}')
+      [ -n "$ID" ] && ssh $SSH_OPTS "$OUTER" "sudo -n su - oneadmin -c \"onevm resume $ID\""
+  # TEST CASE NAME: Front-end High Availability
+  # DESCRIPTION: The prerequisite is to have the Front-end HA configured, see details in OpenNebula documentation.
+  # Checks that config file contents are the same on all FEs, checks the selected leader, simulates a leader failover
+  # by stopping the opennebula service and verifies that a new leader is selected.
+  # OUTPUT: HTML document at /tmp/fe_ha_report.html
+  run_fe_ha: false
+  fe_ha:
+    one_config_path:
+      - /etc/one
+      - /var/lib/one/remotes/etc
+    # Regex patterns for files excluded from FE config diff calculation.
+    config_diff_exclude_patterns:
+      - '\.bak$'
+    one_zone_name: OpenNebula
+
+  # TEST CASE NAME: Federation Validation
+  # DESCRIPTION: Validates OpenNebula Federation configuration and data synchronization across zones.
+  # Checks federation configuration (MODE, ZONE_ID, MASTER_ONED), zone discovery, endpoint connectivity,
+  # federated data synchronization (users, groups, VDCs, ACL rules, marketplaces), database backend consistency,
+  # FireEdge configuration, and oneadmin user consistency across zones.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_federation: false
+  federation:
+    # Minimum number of zones expected in the federation
+    min_zones: 2
+    # Timeout for endpoint connectivity tests (seconds)
+    endpoint_timeout: 10
+    # Check FireEdge configuration
+    check_fireedge: true
+    # Check database backend consistency
+    check_db_backend: true
+    # Verify oneadmin user consistency
+    verify_oneadmin: true
+    # Zone group (defaults to frontend_group or 'frontend')
+    zone_group: frontend
+    # XML-RPC port (default: 2633)
+    xmlrpc_port: 2633
+    # gRPC port (default: 2634)
+    grpc_port: 2634
+    # Configuration files
+    oned_conf: /etc/one/oned.conf
+    fireedge_conf: /etc/one/fireedge-server.conf
+
+# gpu-benchmark role config. This PARTIAL dict is merged recursively over the
+# role defaults by the role itself — you only need to list the keys you
+# change. Only consulted when validation.run_gpu_benchmark is true.
+# This block is the COMPLETE knob reference (every key the role reads, at
+# its default value; commented-out lines = defaults you would uncomment to
+# change). Rationale for each default: roles/gpu-benchmark/defaults/main.yml.
+# The default appliance is the ONEAI Project's 'vLLM Inference Engine'
+# (one-apps appliances/Vllm): the ONEAI marketplace (MARKET_MAD=one) must be
+# registered in OpenNebula so `onemarketapp export` can find the app by name;
+# the PUBLIC marketplace ships the same appliance as 'service_Vllm'.
+# Gated HuggingFace models (Llama) need hf_token (appliance var
+# ONEAPP_VLLM_MODEL_TOKEN) — read it from the environment, never commit it:
+#   hf_token: "{{ lookup('env', 'HF_TOKEN') }}"
+# NOTE: the appliance is x86-64 only. On aarch64 hosts (e.g. GB200) set
+# appliance_market_name to an aarch64 vLLM appliance/image.
+gpu_benchmark:
+  # ---- what runs -----------------------------------------------------------
+  # phase: post                     # 'pre' = bare-metal baseline BEFORE the
+  #                                 # deploy (or -e gpu_benchmark_phase=pre)
+  # Post-deploy backends. 'appliance' = marketplace vLLM VM; 'k8s' = RKE2
+  # cluster per the OpenNebula 7.4 AI-ready K8s guide (vLLM pod per GPU
+  # worker); 'baremetal' = re-measure the PHYSICAL numbers LIVE in the same
+  # run (GPUs released from vfio and rebound afterwards) — same-day,
+  # same-driver comparison. Any combination; the report grows one column
+  # per environment.
+  llm_backends: ['appliance']       # e.g. ['baremetal', 'appliance', 'k8s']
+  appliance_market_name: 'vLLM Inference Engine'
+  vnet_name: public                 # VM network; needs egress (model/toolkit)
+  models:
+    - "Qwen/Qwen2.5-3B-Instruct"
+    # Full certification set (needs larger GPUs; Llama is gated -> hf_token):
+    # - "Qwen/Qwen2.5-14B-Instruct"
+    # - "meta-llama/Llama-3.2-3B-Instruct"
+    # - "meta-llama/Llama-3.2-7B-Instruct"
+  hf_token: ""
+  # gpu_count: all                  # or an int: benchmark only that many GPUs
+
+  # ---- bare-metal baseline (phase=pre, and the live 'baremetal' backend) --
+  #   make validation I=... ANSIBLE_ARGS='-e gpu_benchmark_phase=pre'
+  # Everything the pre run adds to the host is removed afterwards (clean OS).
+  # baremetal:
+  #   hosts: []                     # [] = first node host; a list; or 'all'
+  #   workdir: /root/gpu-bench-tmp  # venv+model+caches live (and die) here
+  #   vllm_version: "0.17.1"        # PIN to the appliance's vLLM version
+  #   allow_driver_install: true    # install+purge the driver if host has none
+  #   baseline_tolerance_pct: 10    # flag virt worse than bare by more than %
+  #   baseline_file: ""             # '' = <inventory_dir>/gpu_baseline.json
+  #   allow_on_deployed: false      # let phase=pre run on a deployed host
+  #   numa_pin: true                # numactl-bind serve+client to the GPU node
+
+  # ---- benchmark VM sizing / placement -------------------------------------
+  # vm:
+  #   vcpu: 8                       # 32 validated on L40S (vLLM is CPU-hungry)
+  #   memory_mb: 16384              # 65536 validated on L40S
+  #   disk_mb: 40960                # OS disk resize at instantiation
+  #   pin_policy: ''                # CORE|THREAD|SHARED; ignored when
+  #                                 # NODE_AFFINITY is emitted (vm_per_gpu)
+  # vm_per_gpu: false               # one VM per GPU, NUMA-affine (recommended
+  #                                 # on multi-socket hosts; +1 boot per GPU)
+  # vm_apt_https: false             # VM apt sources over https (port-80
+  #                                 # blocked / throttled labs)
+  # serve_timeout_s: 1200           # vLLM must serve within this
+  # vllm_context:
+  #   api_port: 8000
+  #   gpu_mem_util: 0.9
+  #   model_max_length: 1024
+
+  # ---- Kubernetes backend (guide-pinned versions/URLs) --------------------
+  # k8s:
+  #   capi_app_name: 'Service Capi'
+  #   release_name: gpu-bench-k8s
+  #   capone_chart_version: '0.1.7'
+  #   gpu_operator_version: 'v25.3.2'
+  #   router_image_url: '<guide vRouter qcow2 URL>'
+  #   node_image_url: '<guide Ubuntu 24.04 qcow2 URL>'   # its kernel headers
+  #                                 # must still exist in the Ubuntu archive
+  #   worker_disk_mb: 204800
+  #   one_xmlrpc_ip: ''             # '' = auto (benchmark vnet bridge IP)
+  #   deploy_timeout_s: 2700
+  #   bootstrap_timeout_s: 5400     # capi bootstrap is bimodal on slow nets
+  #   unwedge_apiserver_cache: true # restart k3s ONCE if its Secrets watch
+  #                                 # cache goes stale (proven deadlock)
+  #   keep_stack_on_failure: false  # true = keep the stack for post-mortem
+  #   hw_probe: true                # cuBLAS+PCIe Job per worker (k8s hw rows)
+  #   cuda_devel_image: 'nvcr.io/nvidia/cuda:12.8.1-devel-ubuntu24.04'
+  #   hw_probe_timeout_s: 1500
+
+  # ---- load profile (SHARED by every backend — the comparability guarantee)
+  # guidellm_profile: >-
+  #   --profile 'kind=sweep,warmup.value=1,warmup.mode=requests,max_concurrency=128'
+  #   --constraint kind=max_requests,count=100000
+  #   --data 'kind=synthetic_text,prompt_tokens=512,output_tokens=256'
+  # guidellm_status: successful     # request bucket the metrics are read from
+  # guidellm_max_duration_s: 20     # seconds per rate; 40 = steadier sync TTFT
+  #                                 # (changing it re-defines the measurement:
+  #                                 # re-record the baseline)
+  # llm_retry_unsaturated: true     # re-run a sweep once when the guidellm
+  #                                 # client landed in its slow mode
+
+  # ---- SLO gates -----------------------------------------------------------
+  thresholds:
+    profile: chat
+    ttft_p95_ms: 200
+    itl_p95_ms: 50
+    min_throughput_req_s: null
+  # Hardware-calibrated reference SLOs (avoid false positives from the
+  # GB200-class chat SLOs above on smaller GPUs). Keyed by nvidia-smi GPU name
+  # -> HF model id -> PARTIAL thresholds merged over `thresholds` for that
+  # combo; anything not listed inherits the global value. There is NO public
+  # canonical per-GPU SLO table for this fixed load profile (numbers depend on
+  # GPU x model x engine version) — these are OUR values, measured on healthy
+  # hardware, with margin. Calibration procedure: roles/gpu-benchmark/README.md.
+  reference:
+    # L40S (guidellm 0.7.1, profile with max_concurrency=128) — VALIDATED
+    # on the lab (PASS). Sustained req/s = curve peak tok/s / 256 tok/req:
+    # with the BOUNDED probe (stable, no overload chaos) healthy L40S
+    # measured 12.8-15.4 req/s across 4 runs (bare-metal + virtualized) ->
+    # floor 10.5 (mean ~14.3 - 25%; ~18% under the weakest healthy card).
+    # TTFT p95 sync ~36-39 ms warm -> gate 200 has ~5x headroom; ITL
+    # 9.7-10.8 ms -> the inherited chat SLO of 50 ms has ample headroom.
+    'NVIDIA L40S':
+      'Qwen/Qwen2.5-3B-Instruct':
+        ttft_p95_ms: 200
+        min_throughput_req_s: 10.5
+    # GB200-class hardware meets the reference doc's chat SLOs directly — no
+    # entry needed (global thresholds apply). Add measured entries per model
+    # once certified runs exist, e.g.:
+    # 'NVIDIA GB200':
+    #   'meta-llama/Llama-3.2-7B-Instruct':
+    #     ttft_p95_ms: 150
+    #     min_throughput_req_s: 40
+
+  # ---- comparisons and their noise guards ---------------------------------
+  # On a multi-GPU host the LLM benchmark runs once PER GPU and the results
+  # are compared against each other; a GPU deviating from the best by more
+  # than llm_variance_pct (throughput down / latency up) is flagged. A
+  # single-GPU host runs once with no comparison. The same guards apply to
+  # the bare-metal-vs-virtualized comparison.
+  llm_variance_pct: 20
+  # compare_min_samples: 30         # no flag below this many successful reqs
+  # compare_min_throughput_req_s: 1.0   # no throughput flag under this rate
+  # compare_min_ttft_delta_ms: 25   # sync-TTFT p95 jitters 10-20 ms on
+  #                                 # identical hardware: relative breaches
+  #                                 # flag only when also material in ms
+  fail_on_flag: false               # true = fail the play on any flag
+
+  # ---- hardware diagnostics ------------------------------------------------
+  cublas:
+    enabled: true
+    # n: 16384                      # matrix dimension
+    # iters: 10
+    variance_pct: 25                # flag a GPU slower than the best by more
+    allow_toolkit_install: true     # false for airgap (needs nvcc present)
+  # NVIDIA DCGM diagnostics (vendor acceptance tool; level 2 ~2-3 min,
+  # 3 ~30 min), PCIe H2D/D2H bandwidth (passthrough data-path check),
+  # functional API conformance suite and under-load power sampling
+  # (tokens/W) are all ON by default — disable or tune per site:
+  # dcgm:
+  #   enabled: true
+  #   level: 2
+  #   timeout_s: 900
+  #   allow_install: true
+  #   run_in_vm: true               # false = host (pre phase) only; some
+  #                                 # appliance images fail the 'software' test
+  # pcie_bw: {enabled: true, size_mb: 256, iters: 20, min_gbs: 8}
+  # pcie_expected_width: null       # e.g. 8 where GPUs are wired x8 by design
+  # functional: {enabled: true}
+  # power_sampling: {enabled: true, interval_s: 5}

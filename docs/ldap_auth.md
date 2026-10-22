@@ -30,9 +30,12 @@ group) and are skipped with a recorded reason when cluster discovery failed.
 4. Writes `ldap_user:ldap_pass` into a temporary `ONE_AUTH` file (mode 0600,
    registered in the run manifest) and runs `oneuser show` with it →
    **LDAP user login to XML-RPC**.
-5. Searches the directory group `ldap_group_dn` (filter
-   `(objectClass=posixGroup)`) for a `<ldap_group_member_attr>: <ldap_user>`
-   line → **LDAP group membership (directory)**.
+5. Resolves the user's DN (`uid`, `sAMAccountName` or `cn` = `ldap_user` under
+   `base_dn`), then searches the directory group `ldap_group_dn` (filter
+   `ldap_group_filter`, default `(objectClass=posixGroup)`) for a
+   `<ldap_group_member_attr>:` value equal to `ldap_user` (POSIX `memberUid`) or
+   to the user's DN (Active Directory / groupOfNames `member`, case-insensitive)
+   → **LDAP group membership (directory)**.
 6. Compares `oneuser show -j` (as the LDAP user) against
    `onegroup show -j <expected_group_name>`: passes when the user's `GNAME`
    equals `expected_group_name` or its `GROUPS` contain the expected group id
@@ -90,7 +93,8 @@ the *Reference* column shows the value set in
 | `validation.ldap_auth.group_mapping.expected_group_name` | `""` | `"opennebula-group"` | Expected OpenNebula group; empty skips the mapping check. |
 | `validation.ldap_auth.group_mapping.expected_group_id` | `""` | `""` | Expected group id; empty means "use the id of `expected_group_name`". |
 | `validation.ldap_auth.group_mapping.ldap_group_dn` | `""` | `"cn=opennebula-group,ou=group,dc=example,dc=com"` | Directory group DN; empty skips the directory membership check. |
-| `validation.ldap_auth.group_mapping.ldap_group_member_attr` | `"memberUid"` | same | Member attribute searched for `ldap_user`. |
+| `validation.ldap_auth.group_mapping.ldap_group_member_attr` | `"memberUid"` | same | Member attribute of the group: `memberUid` (POSIX, user names) or `member` / `uniqueMember` (DNs; Active Directory, groupOfNames). |
+| `validation.ldap_auth.group_mapping.ldap_group_filter` | `"(objectClass=posixGroup)"` | same | Object class filter of the group search; Active Directory: `"(objectClass=group)"`. |
 | `validation.ldap_auth.fireedge_host` | `""` | — | FireEdge host; empty falls back to the frontend's `ansible_host`. |
 | `validation.ldap_auth.fireedge_port` | `""` | — | FireEdge port; empty reads `/etc/one/fireedge-server.conf`, else 2616. |
 | `validation.ldap_auth.fireedge_proto` | `"https"` | `"http"` | FireEdge URL scheme. |

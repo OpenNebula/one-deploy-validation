@@ -16,6 +16,7 @@ the tests you enable; everything not listed here is internal to the deployment
 | storage-benchmark | `marketplace.opennebula.io` · `d24fmfybwxpuhu.cloudfront.net` · `dl-cdn.alpinelinux.org` (in-VM `apk add fio`) · DNS `1.1.1.1`/`8.8.8.8` | pre-register template; `skip_fio_install: true` + fio-preinstalled image |
 | network-benchmark | distro mirrors (nodes: `iperf3`, `jq`, `jc`) | preinstall on nodes |
 | conn_matrix | `marketplace.opennebula.io` · `d24fmfybwxpuhu.cloudfront.net` · distro mirrors (nodes: `jq`, `jc`) | pre-register template; preinstall |
+| vm_lifecycle | `marketplace.opennebula.io` · `d24fmfybwxpuhu.cloudfront.net` | pre-register template; SSH traffic stays inside the deployment |
 | oneflow_validation | `marketplace.opennebula.io` · `d24fmfybwxpuhu.cloudfront.net` (fallback export only) | run test_vm first or pre-register the template |
 | ldap_auth | distro mirrors (frontend: `ldap-utils`/`openldap-clients`, `curl`) · your LDAP server (`validation.ldap_auth.server`) | preinstall; LDAP server is site infrastructure |
 | vm-ha | `marketplace.opennebula.io` · `d24fmfybwxpuhu.cloudfront.net` · optional: the `node_power_on_cmd` endpoint (BMC/IPMI/cloud API, operator-supplied) | pre-register template |

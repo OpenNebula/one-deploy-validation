@@ -1,0 +1,131 @@
+---
+- name: Build eligible KVM host list for cluster {{ vml_cluster.name }}
+  ansible.builtin.set_fact:
+    _vml_eligible_ids: >-
+      {%- set out = [] -%}
+      {%- for host in host_list | d([]) -%}
+        {%- if (host.ID | string) in (vml_cluster.host_ids | map('string') | list)
+              and (host.VM_MAD | d('') | lower) == 'kvm'
+              and (host.STATE | string) in ['1', '2'] -%}
+          {%- set _ = out.append(host.ID | string) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Record cluster with no eligible KVM hosts
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "VM lifecycle{{ vml_cluster.report_suffix }}"
+    result_value: "skipped - no monitored KVM hosts in cluster"
+  when: _vml_eligible_ids | length == 0
+
+- name: Prepare lifecycle template and run hosts in cluster {{ vml_cluster.name }}
+  when: _vml_eligible_ids | length > 0
+  block:
+    - name: Ensure lifecycle VM template exists
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: ensure_test_template.yml
+      vars:
+        ensure_app_name: "{{ _vml_config.market_name }}"
+        ensure_name: "{{ _vml_config.market_name }}{{ vml_cluster.name_suffix }}"
+        ensure_ds_id: "{{ vml_cluster.image_ds_id }}"
+        ensure_cluster: "{{ vml_cluster.name }}"
+        ensure_role: vm_lifecycle
+
+    - name: Prepare lifecycle probe inputs and async runtime
+      ansible.builtin.set_fact:
+        _vml_probe_path: "/tmp/odv-vml-probe-{{ _vml_run_id }}.py"
+        _vml_host_addresses: >-
+          {%- set out = {} -%}
+          {%- for host in host_list | d([]) -%}
+            {%- set _ = out.update({(host.ID | string): ((host.TEMPLATE | d({})).HOSTNAME | d(host.NAME))}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # Deployment/migration/guest waits, VNC, power/reboot, and command margin.
+        _vml_async_budget: >-
+          {{ 7 * (_vml_config.deploy_timeout | int)
+             + 2 * (_vml_config.migration_timeout | int)
+             + 3 * (_vml_config.guest_timeout | int)
+             + (_vml_config.vnc_timeout | int)
+             + (_vml_config.poweroff_timeout | int)
+             + (_vml_config.reboot_timeout | int) + 600 }}
+
+    - name: Stage lifecycle probe for asynchronous execution
+      ansible.builtin.copy:
+        src: lifecycle_probe.py
+        dest: "{{ _vml_probe_path }}"
+        mode: "0700"
+      become: true
+      become_user: oneadmin
+
+    - name: Register every lifecycle VM before launching probes
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: vm
+        manifest_id: ""
+        manifest_name: "odv-vml-{{ _vml_run_id }}-{{ vml_launch_host_id }}"
+        manifest_cluster: "{{ vml_cluster.name }}"
+        manifest_role: vm_lifecycle
+        manifest_disposition: created
+      loop: "{{ _vml_eligible_ids }}"
+      loop_control:
+        loop_var: vml_launch_host_id
+        label: "{{ vml_launch_host_id }}"
+
+    - name: Launch VM lifecycle probes concurrently
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ _vml_probe_path }}"
+          - "{{ _vml_probe_config | to_json | b64encode }}"
+      vars:
+        _vml_probe_config: >-
+          {{ _vml_config | combine({
+               'template_id': _export_template_id,
+               'vnet_name': (_vml_config.vnet_name | length > 0)
+                            | ternary(_vml_config.vnet_name, vml_cluster.vnet_name),
+               'vm_name': 'odv-vml-' ~ _vml_run_id ~ '-' ~ vml_launch_host_id,
+               'source_id': vml_launch_host_id | string,
+               'eligible_ids': _vml_eligible_ids,
+               'hosts': _vml_host_addresses
+             }) }}
+      become: true
+      become_user: oneadmin
+      async: "{{ _vml_async_budget | int }}"
+      poll: 0
+      register: _vml_launch
+      failed_when: false
+      changed_when: true
+      loop: "{{ _vml_eligible_ids }}"
+      loop_control:
+        loop_var: vml_launch_host_id
+        label: "{{ vml_launch_host_id }}"
+
+    - name: Collect lifecycle results and clean up every cluster host
+      ansible.builtin.include_tasks: per_host.yml
+      loop: "{{ vml_cluster.host_ids }}"
+      loop_control:
+        loop_var: vml_host_id
+        label: "{{ vml_host_id }}"
+
+  rescue:
+    - name: Record lifecycle cluster preparation failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "VM lifecycle preparation{{ vml_cluster.report_suffix }}"
+
+  always:
+    - name: Remove staged lifecycle probe
+      ansible.builtin.file:
+        path: "{{ _vml_probe_path }}"
+        state: absent
+      become: true
+      become_user: oneadmin
+      when: _vml_probe_path is defined

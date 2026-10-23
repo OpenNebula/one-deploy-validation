@@ -1,0 +1,13 @@
+---
+_vml_defaults:
+  market_name: "Alpine Linux 3.21"
+  vnet_name: ""
+  deploy_timeout: 300
+  guest_timeout: 180
+  vnc_timeout: 30
+  fireedge_url: ""
+  fireedge_verify_tls: true
+  poweroff_timeout: 180
+  reboot_timeout: 180
+  migration_timeout: 600
+  poll_interval: 5

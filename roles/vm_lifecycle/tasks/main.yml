@@ -1,0 +1,37 @@
+---
+- name: VM lifecycle skipped because cluster discovery failed
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "VM lifecycle"
+    result_value: "skipped - cluster discovery failed"
+  when: odv_discovery_failed | d(false)
+
+- name: Initialize VM lifecycle configuration
+  ansible.builtin.set_fact:
+    _vml_config: "{{ _vml_defaults | combine(validation.vm_lifecycle | d({})) }}"
+    _vml_run_id: "{{ lookup('pipe', 'date +%s') }}-{{ 999999 | random }}"
+  when: not (odv_discovery_failed | d(false))
+
+- name: Validate lifecycle configuration
+  ansible.builtin.assert:
+    that:
+      - (_vml_config.poll_interval | int) > 0
+      - (_vml_config.deploy_timeout | int) > 0
+      - (_vml_config.guest_timeout | int) > 0
+      - (_vml_config.vnc_timeout | int) > 0
+      - _vml_config.fireedge_verify_tls is boolean
+      - (_vml_config.poweroff_timeout | int) > 0
+      - (_vml_config.reboot_timeout | int) > 0
+      - (_vml_config.migration_timeout | int) > 0
+    fail_msg: "VM lifecycle timeouts and poll_interval must be positive seconds"
+  when: not (odv_discovery_failed | d(false))
+
+- name: Validate VM lifecycle in each cluster
+  ansible.builtin.include_tasks: per_cluster.yml
+  loop: "{{ one_clusters | d([]) }}"
+  loop_control:
+    loop_var: vml_cluster
+    label: "{{ vml_cluster.name }}"
+  when: not (odv_discovery_failed | d(false))

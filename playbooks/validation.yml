@@ -92,6 +92,19 @@
         - validation.run_conn_matrix | d(false)
         - not (_gb_pre | bool)
 
+# Exercise normal VM lifecycle on every monitored KVM host. This is opt-in
+# because it powers VMs off, reboots them, and cold-migrates them.
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tags: [vm_lifecycle]
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: vm_lifecycle
+      when:
+        - validation.run_vm_lifecycle | d(false)
+        - not (_gb_pre | bool)
+        - inventory_hostname == groups[frontend_group | d('frontend')][0]
+
 # Run network tests on the hypervisor hosts
 - hosts: "{{ node_group | d('node') }}"
   tags: [network_benchmark]

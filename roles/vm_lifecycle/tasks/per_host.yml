@@ -1,0 +1,99 @@
+---
+- name: Resolve lifecycle source host
+  ansible.builtin.set_fact:
+    _vml_host: >-
+      {%- set out = {} -%}
+      {%- for host in host_list | d([]) -%}
+        {%- if (host.ID | string) == (vml_host_id | string) -%}
+          {%- set _ = out.update(host) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _vml_vm_name: "odv-vml-{{ _vml_run_id }}-{{ vml_host_id }}"
+
+- name: Record ineligible source host checks
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "VM lifecycle {{ item }} ({{ _vml_host.NAME | d('host ' ~ vml_host_id) }}){{ vml_cluster.report_suffix }}"
+    result_value: "skipped - host is not a monitored KVM hypervisor"
+  loop:
+    - deployment
+    - libvirt state
+    - FireEdge VNC
+    - guest readiness
+    - power-off and power-on
+    - reboot
+    - cold migration
+  when: (vml_host_id | string) not in _vml_eligible_ids
+
+- name: Exercise source host {{ _vml_host.NAME | d(vml_host_id) }}
+  when: (vml_host_id | string) in _vml_eligible_ids
+  block:
+    - name: Resolve this host's launched job
+      ansible.builtin.set_fact:
+        _vml_launch_result: >-
+          {{ (_vml_launch.results
+              | selectattr('vml_launch_host_id', 'equalto', vml_host_id | string)
+              | first) | default({}) }}
+
+    - name: Wait for this host's lifecycle probe
+      ansible.builtin.async_status:
+        jid: "{{ _vml_launch_result.ansible_job_id }}"
+      become: true
+      become_user: oneadmin
+      when: _vml_launch_result.ansible_job_id is defined
+      register: _vml_probe
+      until: (_vml_probe.finished | d(false) | bool) or (_vml_probe.failed | d(false) | bool)
+      retries: "{{ ((_vml_async_budget | int) // (_vml_config.poll_interval | int)) + 2 }}"
+      delay: "{{ _vml_config.poll_interval | int }}"
+      failed_when: false
+
+    - name: Decode VM lifecycle probe result
+      ansible.builtin.set_fact:
+        _vml_checks: >-
+          {{ ((_vml_probe.stdout | trim | from_json).checks)
+             if (_vml_probe.rc | d(1) == 0 and (_vml_probe.stdout | d('') | trim).startswith('{'))
+             else [{'name': 'deployment', 'status': 'failed',
+                    'detail': 'probe process failed: ' ~ (
+                      _vml_probe.msg | d(_vml_probe.stderr | d(
+                        _vml_launch_result.msg | d('no async job result'))) | trim | truncate(300))}] }}
+
+    - name: Record each VM lifecycle check
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "VM lifecycle {{ item.name }} ({{ _vml_host.NAME }}){{ vml_cluster.report_suffix }}"
+        result_value: "{{ item.status }}"
+        result_comment: "{{ item.detail | d('') }}"
+      loop: "{{ _vml_checks }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+  rescue:
+    - name: Record unexpected lifecycle host failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "VM lifecycle deployment ({{ _vml_host.NAME | d(vml_host_id) }}){{ vml_cluster.report_suffix }}"
+
+  always:
+    - name: Terminate lifecycle VM by its unique name
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: terminate_vm_by_name.yml
+      vars:
+        tvbn_name: "{{ _vml_vm_name }}"
+        tvbn_role: vm_lifecycle
+
+    - name: Record lifecycle VM cleanup
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "VM lifecycle cleanup ({{ _vml_host.NAME | d(vml_host_id) }}){{ vml_cluster.report_suffix }}"
+        result_value: "{{ 'ok' if (_tvbn_survivors | d([]) | length == 0) else 'failed' }}"
+        result_comment: "{{ 'VM still present: ' ~ (_tvbn_survivors | join(', ')) if (_tvbn_survivors | d([]) | length > 0) else '' }}"

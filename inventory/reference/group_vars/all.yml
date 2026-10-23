@@ -163,6 +163,27 @@ validation:
     vnet_name: public
     market_name: 'Alpine Linux 3.21'
 
+  # TEST CASE NAME: VM Lifecycle
+  # DESCRIPTION: One disposable VM per monitored KVM host; checks deployment,
+  # libvirt/FireEdge VNC/guest readiness, graceful poweroff/resume, reboot,
+  # and cold migration to another host in the same cluster.
+  # OUTPUT: Per-host rows and cleanup audit in the HTML report.
+  run_vm_lifecycle: false
+  vm_lifecycle:
+    market_name: 'Alpine Linux 3.21'
+    # Empty means the cluster-discovered test vnet.
+    vnet_name: ''
+    deploy_timeout: 300
+    guest_timeout: 180
+    vnc_timeout: 30
+    # Empty uses http://127.0.0.1 and the FireEdge server's configured port.
+    fireedge_url: ''
+    fireedge_verify_tls: true
+    poweroff_timeout: 180
+    reboot_timeout: 180
+    migration_timeout: 600
+    poll_interval: 5
+
   # TEST CASE NAME: VM instantiation
   # DESCRIPTION: Fetches a VM template and image from the OpenNebula Marketplace and instantiates it.
   # Optionally also instantiates a VNET, attaches it to the VM, and checks connectivity.

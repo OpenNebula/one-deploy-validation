@@ -26,6 +26,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | OVS topology (bridges/bonds/DPDK interfaces) | [docs/ovs-topology-validation](./docs/ovs-topology-validation.md) | `validation.run_ovs_topology_validation` | off | `ovs_topology_validation` |
 | OneFlow smoke test (service lifecycle) | [docs/oneflow_validation](./docs/oneflow_validation.md) | `validation.run_one_flow` | on | `one_flow` |
 | Connectivity matrix (VM-to-VM across vNets) | [docs/conn_matrix](./docs/conn_matrix.md) | `validation.run_conn_matrix` | off | `conn_matrix` |
+| VM lifecycle (per-host power, reboot, console, migration) | [docs/vm_lifecycle](./docs/vm_lifecycle.md) | `validation.run_vm_lifecycle` | off | `vm_lifecycle` |
 | LDAP authentication | [docs/ldap_auth](./docs/ldap_auth.md) | `validation.run_ldap_auth` | off | `ldap_auth` |
 | VM High Availability (**destructive**: fences a host) | [docs/vm-ha](./docs/vm-ha.md) | `validation.run_vm_ha` | off | `vm_ha` |
 | Front-end High Availability (leader failover) | [docs/fe_ha](./docs/fe_ha.md) | `validation.run_fe_ha` | off | `fe_ha` |

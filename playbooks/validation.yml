@@ -225,6 +225,22 @@
         - not (_gb_pre | bool)
 
 
+# Validate VM vNIC NUMA locality. Read-only by default; active mode is
+# explicitly opt-in and creates disposable NUMA-pinned VMs. Runs on the
+# primary frontend and delegates runtime dataplane probes to hypervisors.
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tags: [vm_vnic_numa_validation]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: vm-vnic-numa-validation
+      when:
+        - validation.run_vm_vnic_numa_validation | d(false)
+        - not (_gb_pre | bool)
+        - inventory_hostname == groups[frontend_group | d('frontend')][0]
+
+
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
 # LEADER's oned destabilizes monitoring/flow-server state for minutes —

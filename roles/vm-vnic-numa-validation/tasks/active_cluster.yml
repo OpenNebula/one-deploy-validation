@@ -1,0 +1,144 @@
+---
+- name: "Resolve OVS-DPDK VNet for cluster {{ current_cluster.name }}"
+  ansible.builtin.shell:
+    cmd: |
+      python3 - <<'PY'
+      import csv
+      import io
+      import json
+      import os
+      import subprocess
+
+      cluster_id = str(os.environ["CLUSTER_ID"])
+      requested = os.environ.get("REQUESTED_VNET", "").strip()
+
+      def run(args):
+          return subprocess.run(
+              args,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+              check=False,
+          )
+
+      def cluster_ids(vnet):
+          value = (vnet.get("CLUSTERS") or {}).get("ID", [])
+          if isinstance(value, list):
+              return {str(x) for x in value}
+          if value in (None, ""):
+              return set()
+          return {str(value)}
+
+      if requested:
+          rows = [["", requested]]
+      else:
+          listed = run(["onevnet", "list", "--csv", "-l", "ID,NAME", "--no-header"])
+          if listed.returncode != 0:
+              print(json.dumps({"found": False, "reason": listed.stderr.strip() or "onevnet list failed"}))
+              raise SystemExit(0)
+          rows = list(csv.reader(io.StringIO(listed.stdout)))
+
+      candidates = []
+      for row in rows:
+          if len(row) < 2:
+              continue
+          ident = requested if requested else row[0].strip()
+          shown = run(["onevnet", "show", ident, "-j"])
+          if shown.returncode != 0:
+              continue
+          try:
+              vnet = json.loads(shown.stdout)["VNET"]
+          except Exception:
+              continue
+          name = str(vnet.get("NAME", ""))
+          if requested and name != requested:
+              continue
+          if cluster_id not in cluster_ids(vnet):
+              continue
+          tmpl = vnet.get("TEMPLATE") or {}
+          if str(tmpl.get("BRIDGE_TYPE", "")).lower() != "openvswitch_dpdk":
+              continue
+          candidates.append({
+              "id": str(vnet.get("ID", "")),
+              "name": name,
+              "bridge": str(tmpl.get("BRIDGE", "")),
+              "bridge_type": str(tmpl.get("BRIDGE_TYPE", "")),
+              "vlan_id": str(tmpl.get("VLAN_ID", "")),
+          })
+
+      if not candidates:
+          reason = (
+              f"requested VNet '{requested}' is not an OVS-DPDK VNet in cluster {cluster_id}"
+              if requested
+              else f"no cluster-local OVS-DPDK VNet found in cluster {cluster_id}"
+          )
+          print(json.dumps({"found": False, "reason": reason}))
+      else:
+          candidates.sort(key=lambda x: int(x["id"]) if x["id"].isdigit() else 2**31)
+          print(json.dumps({"found": True, **candidates[0]}))
+      PY
+    executable: /bin/bash
+  environment:
+    CLUSTER_ID: "{{ current_cluster.id | string }}"
+    REQUESTED_VNET: "{{ _vvn_config.vnet_name | string }}"
+  register: _vvn_vnet_raw
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+- name: Parse OVS-DPDK VNet selection
+  ansible.builtin.set_fact:
+    _vvn_vnet: "{{ _vvn_vnet_raw.stdout | from_json }}"
+
+- name: "Record missing DPDK VNet for cluster {{ current_cluster.name }}"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "VM vNIC NUMA locality{{ current_cluster.report_suffix }}"
+    result_value: "skipped — {{ _vvn_vnet.reason }}"
+  when: not (_vvn_vnet.found | bool)
+
+- name: "Active VM vNIC NUMA validation for cluster {{ current_cluster.name }}"
+  when: _vvn_vnet.found | bool
+  block:
+    - name: Ensure generic validation VM template exists
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: ensure_test_template.yml
+      vars:
+        ensure_app_name: "{{ _vvn_config.market_name }}"
+        ensure_name: "{{ _vvn_config.market_name }}{{ current_cluster.name_suffix }}"
+        ensure_ds_id: "{{ current_cluster.image_ds_id }}"
+        ensure_role: vm-vnic-numa-validation
+        ensure_cluster: "{{ current_cluster.name }}"
+        ensure_apply_extra: false
+
+    - name: Wait for validation image to become ready
+      ansible.builtin.shell: >-
+        oneimage list --f ID={{ _export_image_id }} -l STAT --no-header
+      register: _vvn_image_state
+      changed_when: false
+      failed_when: >-
+        _vvn_image_state.rc != 0 or
+        (_vvn_image_state.stdout | trim) not in ['rdy', 'used']
+      until: (_vvn_image_state.stdout | trim) in ['rdy', 'used']
+      retries: "{{ _vvn_config.image_ready_retries | int }}"
+      delay: "{{ _vvn_config.image_ready_delay | int }}"
+      become: true
+      become_user: oneadmin
+
+    - name: Validate every host in the cluster
+      ansible.builtin.include_tasks: active_host.yml
+      loop: "{{ current_cluster.host_ids }}"
+      loop_control:
+        loop_var: _vvn_host_id
+        label: "host-id={{ _vvn_host_id }}"
+
+  rescue:
+    - name: Record active cluster VM vNIC NUMA validation failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "VM vNIC NUMA locality{{ current_cluster.report_suffix }}"

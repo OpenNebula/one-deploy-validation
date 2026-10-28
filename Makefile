@@ -39,6 +39,7 @@ validation: $(ENV_ONE_DEPLOY_VALIDATION)
 .PHONY: test
 test: $(ENV_ONE_DEPLOY_VALIDATION)
 	cd $(SELF)/ && \
+	$(call ENV_RUN,validation-default) python3 $(SELF)/test/vm_vnic_numa/test_logic.py && \
 	$(call ENV_RUN,validation-default) python3 $(SELF)/test/gpu_benchmark/lint_shell.py && \
 	$(call ENV_RUN,validation-default) ansible-playbook -i localhost, $(SELF)/test/gpu_benchmark/test_logic.yml && \
 	$(call ENV_RUN,validation-default) ansible-playbook -i localhost, $(SELF)/test/harness/test_logic.yml

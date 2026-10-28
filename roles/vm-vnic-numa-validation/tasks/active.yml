@@ -1,0 +1,7 @@
+---
+- name: Validate VM vNIC NUMA locality in each cluster
+  ansible.builtin.include_tasks: active_cluster.yml
+  loop: "{{ _vvn_clusters }}"
+  loop_control:
+    loop_var: current_cluster
+    label: "{{ current_cluster.name }}"

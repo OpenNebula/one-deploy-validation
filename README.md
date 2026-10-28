@@ -30,6 +30,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | OVS topology (bridges/bonds/DPDK interfaces) | [docs/ovs-topology-validation](./docs/ovs-topology-validation.md) | `validation.run_ovs_topology_validation` | off | `ovs_topology_validation` |
 | DPDK interface initialization and attachment | [docs/dpdk-interface-init-validation](./docs/dpdk-interface-init-validation.md) | `validation.run_dpdk_interface_init_validation` | off | `dpdk_interface_init_validation` |
 | Vhost-user directories, sockets and ACLs | [docs/vhost-user-validation](./docs/vhost-user-validation.md) | `validation.run_vhost_user_validation` | off | `vhost_user_validation` |
+| VM vNIC NUMA locality (vhost-user / OVS-DPDK / SR-IOV) | [docs/vm-vnic-numa-validation](./docs/vm-vnic-numa-validation.md) | `validation.run_vm_vnic_numa_validation` | off | `vm_vnic_numa_validation` |
 | OneFlow smoke test (service lifecycle) | [docs/oneflow_validation](./docs/oneflow_validation.md) | `validation.run_one_flow` | on | `one_flow` |
 | Connectivity matrix (VM-to-VM across vNets) | [docs/conn_matrix](./docs/conn_matrix.md) | `validation.run_conn_matrix` | off | `conn_matrix` |
 | VM lifecycle (per-host power, reboot, console, migration) | [docs/vm_lifecycle](./docs/vm_lifecycle.md) | `validation.run_vm_lifecycle` | off | `vm_lifecycle` |

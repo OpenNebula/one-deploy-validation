@@ -108,9 +108,11 @@
 
 {% macro status_from(value, comment='') -%}
   {%- set text = ((value | string) ~ ' ' ~ (comment | default('') | string)) | lower -%}
-  {%- if 'unreachable' in text or 'inactive' in text or 'failed' in text or 'error' in text or (text | regex_search('(^|[^a-z])fault([^a-z]|$)')) -%}fail
+  {%- set outcome = value | string | trim | lower -%}
+  {%- if outcome == 'degraded' -%}warn
+  {%- elif 'unreachable' in text or 'inactive' in text or 'failed' in text or 'error' in text or (text | regex_search('(^|[^a-z])fault([^a-z]|$)')) -%}fail
   {%- elif 'skipped' in text and 'disabled' in text -%}info
-  {%- elif 'warning' in text or 'skipped' in text or 'unknown' in text or ' n/a' in text -%}warn
+  {%- elif 'warning' in text or 'degraded' in text or 'skipped' in text or 'unknown' in text or ' n/a' in text -%}warn
   {%- elif value == 'ok' or value == 'reachable' or value == 'active' or value == 'enabled' or value == 'running' or 'ok -' in text or 'state=running' in text or ('packet_loss_percent' in text and ('packet_loss_percent": 0.0' in text or "packet_loss_percent': 0.0" in text or 'packet_loss_percent: 0.0' in text)) -%}pass
   {%- else -%}info
   {%- endif -%}
@@ -840,7 +842,7 @@
       {%- if nsm.matched -%}
         {%- set vt = v | string | trim | lower -%}
         {%- if vt.startswith('failed') or vt.startswith('error') or 'unreachable' in vt -%}{%- set nsw.failed = true -%}
-        {%- elif vt.startswith('warning') -%}{%- set nsw.warning = true -%}
+        {%- elif vt.startswith('warning') or vt.startswith('degraded') -%}{%- set nsw.warning = true -%}
         {%- elif vt.startswith('skipped') -%}{%- set nsw.skipped = true -%}
         {%- else -%}{%- set nsw.ok = true -%}
         {%- endif -%}
@@ -880,6 +882,8 @@
      'prefixes': ['DPDK interface initialization']},
     {'label': 'Vhost-user runtime paths', 'flag': validation_vars.run_vhost_user_validation | default(false),
      'prefixes': ['Vhost-user']},
+    {'label': 'VM vNIC NUMA locality', 'flag': validation_vars.run_vm_vnic_numa_validation | default(false),
+     'prefixes': ['VM vNIC NUMA locality']},
     {'label': 'Core services',       'flag': validation_vars.run_core_services | default(true),
      'prefixes': ['Core services']},
     {'label': 'OneFlow smoke test',  'flag': validation_vars.run_one_flow | default(false),

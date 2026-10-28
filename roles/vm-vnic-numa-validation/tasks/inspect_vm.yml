@@ -1,0 +1,47 @@
+---
+- name: Resolve read-only VM hypervisor delegate
+  ansible.builtin.set_fact:
+    _vvn_existing_runtime_host: >-
+      {{ host_name_to_hostname_cmd.get(_vvn_existing_vm.host, _vvn_existing_vm.host) }}
+    _vvn_existing_delegate: >-
+      {{ _vvn_runtime_to_inventory.get(
+           host_name_to_hostname_cmd.get(_vvn_existing_vm.host, _vvn_existing_vm.host),
+           _vvn_existing_vm.host) }}
+    _vvn_existing_args: >-
+      {% for target in _vvn_existing_vm.targets | d([]) %} --target {{ target }}{% endfor %}
+      {% for pci in _vvn_existing_vm.pci_ids | d([]) %} --expected-pci {{ pci }}{% endfor %}
+
+- name: "Probe {{ _vvn_existing_vm.name }} vNIC NUMA locality"
+  ansible.builtin.script:
+    cmd: >-
+      {{ role_path }}/files/probe.py --vm-id {{ _vvn_existing_vm.id }} {{ _vvn_existing_args }}
+    executable: /usr/bin/python3
+  delegate_to: "{{ _vvn_existing_delegate }}"
+  register: _vvn_existing_probe_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse read-only VM probe
+  ansible.builtin.set_fact:
+    _vvn_existing_probe: >-
+      {{ (_vvn_existing_probe_raw.stdout | from_json)
+         if (_vvn_existing_probe_raw.rc == 0 and (_vvn_existing_probe_raw.stdout | trim | length) > 0)
+         else {'result': 'failed', 'findings': [_vvn_existing_probe_raw.stderr | d('probe failed')]} }}
+
+- name: Show read-only VM vNIC NUMA locality diagnostic
+  ansible.builtin.include_tasks: show_diagnostic.yml
+  vars:
+    _vvn_diag_label: >-
+      VM vNIC NUMA locality {{ _vvn_existing_vm.name }}
+      on {{ _vvn_existing_vm.host }}
+    _vvn_diag_probe: "{{ _vvn_existing_probe }}"
+
+- name: Record read-only VM vNIC NUMA locality result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      VM vNIC NUMA locality {{ _vvn_existing_vm.name }} on {{ _vvn_existing_vm.host }}
+    result_value: "{{ _vvn_existing_probe.result }}"
+    result_comment: "{{ _vvn_existing_probe }}"

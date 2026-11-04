@@ -1,0 +1,128 @@
+---
+- name: Build disposable NUMA VM identity
+  ansible.builtin.set_fact:
+    _vvn_vm_name: >-
+      odv-vnic-numa-{{ _vvn_onehost_name | lower | regex_replace('[^a-z0-9]+', '-') }}-n{{ _vvn_numa_node }}{{ current_cluster.name_suffix }}
+    _vvn_result_key: >-
+      VM vNIC NUMA locality {{ _vvn_onehost_name }} NUMA {{ _vvn_numa_node }}{{ current_cluster.report_suffix }}
+
+- name: "Validate VM vNIC locality on {{ _vvn_onehost_name }} NUMA {{ _vvn_numa_node }}"
+  block:
+    - name: Assert usable hugepage size was discovered
+      ansible.builtin.assert:
+        that:
+          - _vvn_host_topology.hugepage_mb is not none
+          - (_vvn_host_topology.hugepage_mb | int) > 0
+        fail_msg: "Unable to determine host Hugepagesize from /proc/meminfo"
+
+    - name: Build per-VM NUMA template
+      ansible.builtin.set_fact:
+        _vvn_vm_raw: |-
+          CPU="{{ _vvn_config.vcpu }}"
+          VCPU="{{ _vvn_config.vcpu }}"
+          MEMORY="{{ _vvn_config.memory_mb }}"
+          SCHED_REQUIREMENTS="HYPERVISOR=kvm & ID = {{ _vvn_host_id }}"
+          TOPOLOGY=[
+            SOCKETS="1",
+            CORES="{{ _vvn_config.vcpu }}",
+            THREADS="1",
+            NODE_AFFINITY="{{ _vvn_numa_node }}",
+            HUGEPAGE_SIZE="{{ _vvn_host_topology.hugepage_mb }}",
+            MEMORY_ACCESS="shared" ]
+
+    - name: Register disposable NUMA validation VM in manifest
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: vm
+        manifest_id: ""
+        manifest_name: "{{ _vvn_vm_name }}"
+        manifest_cluster: "{{ current_cluster.name }}"
+        manifest_role: vm-vnic-numa-validation
+        manifest_disposition: created
+
+    - name: Instantiate NUMA-local DPDK VM
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          RAW_FILE=$(mktemp)
+          cat >"$RAW_FILE" <<'EOF'
+          {{ _vvn_vm_raw }}
+          EOF
+          RAW=$(cat "$RAW_FILE")
+          rm -f "$RAW_FILE"
+          onetemplate instantiate {{ _export_template_id }} \
+            --name '{{ _vvn_vm_name }}' \
+            --nic '{{ _vvn_vnet.name }}' \
+            --raw "$RAW"
+        executable: /bin/bash
+      register: _vvn_instantiate
+      become: true
+      become_user: oneadmin
+
+    - name: Resolve disposable VM ID
+      ansible.builtin.set_fact:
+        _vvn_vm_id: "{{ _vvn_instantiate.stdout.split(':')[-1] | trim }}"
+
+    - name: Wait for disposable VM to reach RUNNING
+      ansible.builtin.shell: >-
+        onevm list --f ID={{ _vvn_vm_id }} -l STAT --no-header
+      register: _vvn_vm_state
+      changed_when: false
+      failed_when: >-
+        _vvn_vm_state.rc != 0 or
+        (_vvn_vm_state.stdout | trim) != 'runn'
+      until: (_vvn_vm_state.stdout | trim) == 'runn'
+      retries: "{{ _vvn_config.vm_running_retries | int }}"
+      delay: "{{ _vvn_config.vm_running_delay | int }}"
+      become: true
+      become_user: oneadmin
+
+    - name: Probe VM vNIC NUMA locality on the hypervisor
+      ansible.builtin.script:
+        cmd: >-
+          {{ role_path }}/files/probe.py --vm-id {{ _vvn_vm_id }}
+        executable: /usr/bin/python3
+      delegate_to: "{{ _vvn_delegate_host }}"
+      register: _vvn_probe_raw
+      changed_when: false
+      failed_when: _vvn_probe_raw.rc != 0
+
+    - name: Parse VM vNIC NUMA locality probe
+      ansible.builtin.set_fact:
+        _vvn_probe: "{{ _vvn_probe_raw.stdout | from_json }}"
+
+    - name: Show active VM vNIC NUMA locality diagnostic
+      ansible.builtin.include_tasks: show_diagnostic.yml
+      vars:
+        _vvn_diag_label: "{{ _vvn_result_key }}"
+        _vvn_diag_probe: "{{ _vvn_probe }}"
+
+    - name: Record VM vNIC NUMA locality result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "{{ _vvn_result_key }}"
+        result_value: "{{ _vvn_probe.result }}"
+        result_comment: "{{ _vvn_probe }}"
+
+  rescue:
+    - name: Record VM vNIC NUMA locality execution failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "{{ _vvn_result_key }}"
+
+  always:
+    - name: Remove disposable NUMA validation VM
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: terminate_vm_by_name.yml
+      vars:
+        tvbn_name: "{{ _vvn_vm_name }}"
+        tvbn_role: vm-vnic-numa-validation
+        tvbn_retries: 20
+        tvbn_delay: 5

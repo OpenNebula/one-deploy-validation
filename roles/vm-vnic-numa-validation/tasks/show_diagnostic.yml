@@ -1,0 +1,30 @@
+---
+# Human-readable CLI summary for VM vNIC NUMA probe results.
+#
+# Inputs:
+#   _vvn_diag_label - display label
+#   _vvn_diag_probe - probe.py result mapping
+
+- name: Show VM vNIC NUMA locality diagnostic
+  ansible.builtin.debug:
+    msg: |-
+      {% set placement = _vvn_diag_probe.placement | default({}) %}
+      {{ _vvn_diag_label }}: {{ _vvn_diag_probe.result | default('unknown') | upper }}
+      Placement: CPU={{ placement.cpu_nodes | default([]) }} memory={{ placement.memory_nodes | default([]) }} target={{ placement.target_node if (placement.target_node is defined and placement.target_node is not none) else 'unknown' }} - {{ placement.result | default('unknown') | upper }}
+      {% for iface in _vvn_diag_probe.interfaces | default([]) %}
+      Interface {{ iface.name | default('unknown') }} ({{ iface.kind | default('unknown') }}{% if iface.bridge is defined %}, bridge={{ iface.bridge }}{% endif %}): {{ iface.result | default('unknown') | upper }}
+      {% if (iface.kind | default('')) == 'vhost-user' %}
+        PMD: cores={{ iface.pmd.cores | default([]) }} NUMA={{ iface.pmd.numa_nodes | default([]) }} - {{ iface.pmd.result | default('unknown') | upper }}
+      {% for uplink in iface.uplinks | default([]) %}
+        Uplink {{ uplink.port | default('unknown') }} ({{ uplink.type | default('unknown') }}{% if uplink.mode is defined %}, {{ uplink.mode }}{% endif %}): {{ uplink.result | default('unknown') | upper }}
+      {% for member in uplink.members | default([]) %}
+          {{ member.name | default('unknown') }}: PCI={{ member.pci | default('N/A', true) }} NUMA={{ member.numa_node if (member.numa_node is defined and member.numa_node is not none) else 'unknown' }}{% if member.active | default(false) %} active{% endif %}{% if member.eligible | default(true) %} eligible{% else %} ineligible{% endif %}
+            physical RX PMD: cores={{ member.pmd.cores | default([]) }} NUMA={{ member.pmd.numa_nodes | default([]) }} VM-locality={{ member.pmd.vm_result | default('unknown') | upper }} PCI-locality={{ member.pmd.pci_result | default('unknown') | upper }} path={{ member.pmd.result | default('unknown') | upper }}
+      {% endfor %}
+      {% endfor %}
+      {% elif (iface.kind | default('')) == 'sriov' %}
+        SR-IOV: VF={{ iface.vf_pci | default('N/A', true) }} NUMA={{ iface.vf_numa_node if (iface.vf_numa_node is defined and iface.vf_numa_node is not none) else 'unknown' }} PF={{ iface.pf_pci | default('N/A', true) }} NUMA={{ iface.pf_numa_node if (iface.pf_numa_node is defined and iface.pf_numa_node is not none) else 'unknown' }}
+      {% endif %}
+        Findings: {{ (iface.findings | default([]) | join('; ')) if (iface.findings | default([]) | length > 0) else 'none' }}
+      {% endfor %}
+      Overall findings: {{ (_vvn_diag_probe.findings | default([]) | join('; ')) if (_vvn_diag_probe.findings | default([]) | length > 0) else 'none' }}

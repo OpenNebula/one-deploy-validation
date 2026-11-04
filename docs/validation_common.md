@@ -101,9 +101,12 @@ Call with `include_role: {name: validation_common, tasks_from: <file>}` and the 
 Result-value convention for `record_result`: `ok` (or `ok - ...`) and the exact values
 `reachable`/`active`/`enabled`/`running` (or a value containing `state=running`) render
 PASS; strings containing `failed`/`error`/`unreachable`/`inactive`/`fault` render FAIL;
-`warning`/`skipped`/`unknown`/` n/a` render WARN (`skipped` + `disabled` renders INFO);
-anything else INFO. Classification runs on the value *plus* the comment text — see
-`status_from` in `playbooks/templates/appendix-cloud-report.j2` for the full rules.
+`warning`/`degraded`/`skipped`/`unknown`/` n/a` render WARN (`skipped` + `disabled` renders INFO);
+anything else INFO. Classification normally considers both the value and
+its diagnostic comment. An explicit `degraded` verdict always renders WARN,
+even when its JSON diagnostics contain `failed` or `error` for individual
+paths. See `status_from` in `playbooks/templates/appendix-cloud-report.j2`
+for the full rules.
 
 This role itself records only: `Cluster <name> validation = skipped (no hosts)` and, on
 discovery failure, `Cluster discovery = failed`.

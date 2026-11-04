@@ -1,0 +1,5 @@
+---
+_host_reboot_defaults:
+  reboot_timeout: 600
+  monitoring_timeout: 600
+  poll_interval: 10

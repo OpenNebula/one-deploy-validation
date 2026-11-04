@@ -1,0 +1,76 @@
+---
+- name: Host reboot skipped because cluster discovery failed
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+    apply:
+      tags: [host_reboot]
+  vars:
+    result_key: "Host reboot: monitoring recovery"
+    result_value: "skipped - cluster discovery failed"
+  when: odv_discovery_failed | d(false)
+
+- name: Initialize host reboot validation
+  ansible.builtin.set_fact:
+    _hr_config: "{{ _host_reboot_defaults | combine(validation.host_reboot | d({})) }}"
+    host_reboot_failed: false
+    _hr_node_hostnames: >-
+      {%- set names = {} -%}
+      {%- for node in groups[node_group | d('node')] | d([]) -%}
+        {%- set _ = names.update({node: hostvars[node].hostname_cmd | d('')}) -%}
+      {%- endfor -%}
+      {{ names }}
+  when: not (odv_discovery_failed | d(false))
+
+- name: Check host reboot configuration
+  ansible.builtin.set_fact:
+    _hr_config_valid: >-
+      {{ (_hr_config.reboot_timeout | int) > 0
+         and (_hr_config.monitoring_timeout | int) > 0
+         and (_hr_config.poll_interval | int) > 0 }}
+  when: not (odv_discovery_failed | d(false))
+
+- name: Record invalid host reboot configuration
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+    apply:
+      tags: [host_reboot]
+  vars:
+    result_key: "Host reboot: monitoring recovery"
+    result_value: "failed"
+    result_comment: "reboot_timeout, monitoring_timeout and poll_interval must be positive seconds"
+  when:
+    - not (odv_discovery_failed | d(false))
+    - not (_hr_config_valid | bool)
+
+- name: Stop disruptive tests after invalid host reboot configuration
+  ansible.builtin.set_fact:
+    host_reboot_failed: true
+  when:
+    - not (odv_discovery_failed | d(false))
+    - not (_hr_config_valid | bool)
+
+- name: Read current OpenNebula host pool
+  ansible.builtin.command: onehost list -j
+  become: true
+  become_user: oneadmin
+  register: _hr_host_pool
+  changed_when: false
+  failed_when: false
+  when:
+    - not (odv_discovery_failed | d(false))
+    - _hr_config_valid | bool
+
+- name: Validate one reboot per cluster
+  ansible.builtin.include_tasks: per_cluster.yml
+  args:
+    apply:
+      tags: [host_reboot]
+  loop: "{{ one_clusters | d([]) }}"
+  loop_control:
+    loop_var: hr_cluster
+    label: "{{ hr_cluster.name }}"
+  when:
+    - not (odv_discovery_failed | d(false))
+    - _hr_config_valid | bool

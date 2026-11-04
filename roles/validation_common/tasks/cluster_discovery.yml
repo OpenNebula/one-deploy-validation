@@ -15,6 +15,11 @@
     _clusters_raw: []
     one_clusters: []
     host_id_to_cluster: {}
+    # A host reboot needs cluster membership, but no datastore or vnet.
+    # Other tagged or full-suite runs keep the normal resource checks.
+    _odv_host_reboot_only: >-
+      {{ 'host_reboot' in (ansible_run_tags | d([]))
+         and ((ansible_run_tags | d([])) | difference(['host_reboot']) | length == 0) }}
 
 - name: Get cluster pool
   ansible.builtin.shell: onecluster list -j
@@ -197,6 +202,7 @@
   loop: "{{ one_clusters }}"
   loop_control:
     label: "{{ item.name }}"
+  when: not (_odv_host_reboot_only | bool)
 
 # The resolved vnet must either already exist in the cluster, or be the test
 # vnet that the test_vm role will create later in this run.
@@ -216,6 +222,7 @@
   loop: "{{ one_clusters }}"
   loop_control:
     label: "{{ item.name }}"
+  when: not (_odv_host_reboot_only | bool)
 
 - name: Build host-to-cluster map
   ansible.builtin.set_fact:

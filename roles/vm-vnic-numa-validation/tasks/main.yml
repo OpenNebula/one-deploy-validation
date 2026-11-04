@@ -1,0 +1,37 @@
+---
+- name: Build VM vNIC NUMA validation configuration
+  ansible.builtin.set_fact:
+    _vvn_config: >-
+      {{ vm_vnic_numa_validation_defaults
+         | combine(validation.vm_vnic_numa | d({}), recursive=true) }}
+    _vvn_runtime_to_inventory: {}
+
+- name: Build runtime-hostname to Ansible inventory map
+  ansible.builtin.set_fact:
+    _vvn_runtime_to_inventory: >-
+      {{ _vvn_runtime_to_inventory
+         | combine({(hostvars[item].hostname | d(item) | string): item}) }}
+  loop: "{{ groups[node_group | d('node')] | d([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: VM vNIC NUMA locality — skip when cluster discovery failed
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "VM vNIC NUMA locality"
+    result_value: "skipped — cluster discovery failed"
+  when: hostvars[_vvn_primary_frontend].odv_discovery_failed | d(false)
+
+- name: Run active VM vNIC NUMA validation
+  ansible.builtin.include_tasks: active.yml
+  when:
+    - not (hostvars[_vvn_primary_frontend].odv_discovery_failed | d(false))
+    - _vvn_config.create_test_vms | bool
+
+- name: Run read-only VM vNIC NUMA validation
+  ansible.builtin.include_tasks: readonly.yml
+  when:
+    - not (hostvars[_vvn_primary_frontend].odv_discovery_failed | d(false))
+    - not (_vvn_config.create_test_vms | bool)

@@ -1,0 +1,141 @@
+---
+- name: "Host reboot: skip {{ hr_cluster.name }} after earlier failure"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+    apply:
+      tags: [host_reboot]
+  vars:
+    result_key: "Host reboot: monitoring recovery{{ hr_cluster.report_suffix }}"
+    result_value: "skipped - earlier host reboot did not recover"
+  when: host_reboot_failed | d(false) | bool
+
+- name: "Host reboot: validate {{ hr_cluster.name }}"
+  when: not (host_reboot_failed | d(false) | bool)
+  block:
+    - name: Build ordered monitored host candidates
+      ansible.builtin.set_fact:
+        _hr_candidates: >-
+          {{ hr_cluster | host_reboot_candidates(
+               _hr_host_pool.stdout | d(''), _hr_node_hostnames) }}
+        _hr_target: {}
+        _hr_offline: {}
+        _hr_reboot: {}
+        _hr_enable: {}
+        _hr_monitor: {}
+
+    - name: Probe candidate node connections
+      ansible.builtin.ping:
+      delegate_to: "{{ candidate.node }}"
+      loop: "{{ _hr_candidates }}"
+      loop_control:
+        loop_var: candidate
+        label: "{{ candidate.node }}"
+      register: _hr_probes
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+
+    - name: Choose lowest-ID reachable monitored host
+      ansible.builtin.set_fact:
+        _hr_target: >-
+          {{ (_hr_probes.results | d([])
+              | selectattr('ping', 'defined')
+              | selectattr('ping', 'equalto', 'pong')
+              | map(attribute='candidate') | list | first) | d({}, true) }}
+
+    - name: Set the selected OpenNebula host offline
+      ansible.builtin.command: "onehost offline {{ _hr_target.id }}"
+      become: true
+      become_user: oneadmin
+      register: _hr_offline
+      changed_when: (_hr_offline.rc | d(1)) == 0
+      failed_when: false
+      ignore_unreachable: true
+      when: _hr_target | length > 0
+
+    - name: Reboot the selected node
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ _hr_config.reboot_timeout | int }}"
+      become: true
+      become_user: root
+      delegate_to: "{{ _hr_target.node }}"
+      register: _hr_reboot
+      ignore_errors: true
+      ignore_unreachable: true
+      when:
+        - _hr_target | length > 0
+        - (_hr_offline.rc | d(1)) == 0
+
+    - name: Re-enable the selected OpenNebula host
+      ansible.builtin.command: "onehost enable {{ _hr_target.id }}"
+      become: true
+      become_user: oneadmin
+      register: _hr_enable
+      changed_when: (_hr_enable.rc | d(1)) == 0
+      failed_when: false
+      ignore_unreachable: true
+      when: _hr_target | length > 0
+
+    - name: Wait for the host to reach MONITORED state
+      ansible.builtin.command: "onehost show {{ _hr_target.id }} -j"
+      become: true
+      become_user: oneadmin
+      register: _hr_monitor
+      changed_when: false
+      failed_when: false
+      ignore_errors: true
+      until: >-
+        (_hr_monitor.rc | d(1) == 0)
+        and ((_hr_monitor.stdout | d('') | host_reboot_state) == 2)
+      retries: >-
+        {{ ((_hr_config.monitoring_timeout | int) + (_hr_config.poll_interval | int) - 1)
+           // (_hr_config.poll_interval | int) }}
+      delay: "{{ _hr_config.poll_interval | int }}"
+      when:
+        - _hr_reboot.rebooted | d(false) | bool
+        - not (_hr_reboot.failed | d(false) | bool)
+        - not (_hr_reboot.unreachable | d(false) | bool)
+        - (_hr_enable.rc | d(1)) == 0
+
+    - name: Parse post-reboot monitoring state
+      ansible.builtin.set_fact:
+        _hr_post_state: "{{ _hr_monitor.stdout | d('') | host_reboot_state }}"
+        _hr_success: >-
+          {{ ((_hr_offline.rc | d(1)) == 0)
+             and (_hr_reboot.rebooted | d(false) | bool)
+             and not (_hr_reboot.failed | d(false) | bool)
+             and not (_hr_reboot.unreachable | d(false) | bool)
+             and ((_hr_enable.rc | d(1)) == 0)
+             and (_hr_monitor.rc | d(1) == 0)
+             and ((_hr_monitor.stdout | d('') | host_reboot_state) == 2) }}
+
+    - name: Record host reboot monitoring result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+        apply:
+          tags: [host_reboot]
+      vars:
+        result_key: "Host reboot: monitoring recovery{{ hr_cluster.report_suffix }}"
+        result_value: "{{ 'ok' if _hr_success | bool else 'failed' }}"
+        result_comment: >-
+          {{ 'no reachable monitored OpenNebula host maps uniquely to the node inventory; '
+             if _hr_target | length == 0 else '' }}
+          {{ 'onehost list: ' ~ (_hr_host_pool.stderr | d('') | trim) ~ '; '
+             if (_hr_host_pool.rc | d(1)) != 0 else '' }}
+          host={{ _hr_target.name | d('?') }} (ID={{ _hr_target.id | d('?') }},
+          inventory={{ _hr_target.node | d('?') }});
+          offline rc={{ _hr_offline.rc | d('skipped') }};
+          rebooted={{ _hr_reboot.rebooted | d(false) }};
+          enable rc={{ _hr_enable.rc | d('skipped') }};
+          post-reboot STATE={{ _hr_post_state | d('?') }};
+          onehost show rc={{ _hr_monitor.rc | d('skipped') }};
+          detail={{ ([_hr_offline.stderr | d(''), _hr_reboot.msg | d(''),
+                     _hr_enable.stderr | d(''), _hr_monitor.stderr | d('')]
+                    | map('trim') | reject('equalto', '') | join('; ')) | truncate(400) }}
+
+    - name: Stop further reboots after failure
+      ansible.builtin.set_fact:
+        host_reboot_failed: true
+      when: not (_hr_success | bool)

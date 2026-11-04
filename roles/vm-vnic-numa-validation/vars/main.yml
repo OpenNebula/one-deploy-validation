@@ -1,0 +1,4 @@
+---
+_vvn_primary_frontend: "{{ groups[frontend_group | d('frontend')][0] }}"
+_vvn_clusters: "{{ hostvars[_vvn_primary_frontend].one_clusters | d([]) }}"
+_vvn_clusters_multi: "{{ hostvars[_vvn_primary_frontend].one_clusters_multi | d(false) }}"

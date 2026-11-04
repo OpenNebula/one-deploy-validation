@@ -1,7 +1,7 @@
 ---
 # Records one check outcome into the shared report facts.
 # Inputs: result_key (full key incl. cluster suffix), result_value
-# ('ok' | 'failed' | 'skipped — <reason>' | free string), optional result_comment.
+# ('ok' | 'degraded' | 'failed' | 'skipped — <reason>' | free string), optional result_comment.
 
 - name: "Record result: {{ result_key }} = {{ result_value }}"
   ansible.builtin.set_fact:

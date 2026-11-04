@@ -1,0 +1,19 @@
+---
+vm_vnic_numa_validation_defaults:
+  # Read-only by default. When true, create disposable NUMA-pinned VMs on
+  # DPDK-capable networks and validate every requested host NUMA node.
+  create_test_vms: false
+
+  # Existing OVS-DPDK VNet to use in active mode. Empty = auto-select the
+  # first cluster-local VNet whose BRIDGE_TYPE is openvswitch_dpdk.
+  vnet_name: ""
+
+  market_name: "Alpine Linux 3.21"
+  test_numa_nodes: all
+  vcpu: 2
+  memory_mb: 2048
+
+  image_ready_retries: 60
+  image_ready_delay: 10
+  vm_running_retries: 30
+  vm_running_delay: 5

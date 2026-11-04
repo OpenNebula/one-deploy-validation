@@ -277,6 +277,26 @@ validation:
       validate: true
       policy_module: dpdk_virt
 
+  # TEST CASE NAME: VM vNIC NUMA Locality Validation
+  # DESCRIPTION: Correlates VM CPU/memory NUMA placement with vhost-user PMD
+  # placement, OVS DPDK uplinks/bonds, and SR-IOV VF/PF PCI locality.
+  # Read-only by default; optional active mode creates disposable NUMA-pinned
+  # VMs on an existing cluster-local OVS-DPDK VNet.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_vm_vnic_numa_validation: false
+  vm_vnic_numa:
+    create_test_vms: false
+    vnet_name: ''
+    market_name: 'Alpine Linux 3.21'
+    test_numa_nodes: all
+    vcpu: 2
+    memory_mb: 2048
+    image_ready_retries: 60
+    image_ready_delay: 10
+    vm_running_retries: 30
+    vm_running_delay: 5
+
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing
@@ -373,6 +393,16 @@ validation:
     rpc2_proto: "http"
     rpc2_path: "/RPC2"
     rpc2_skip_tls_verify: true
+
+  # TEST CASE NAME: Host monitoring recovery after normal reboot
+  # Reboots one monitored hypervisor per validated cluster, even if it runs
+  # VMs. Sets the OpenNebula host offline first, then enables it after reboot.
+  # The selected host must return to MONITORED after being enabled.
+  run_host_reboot: false
+  host_reboot:
+    reboot_timeout: 600
+    monitoring_timeout: 600
+    poll_interval: 10
 
   # TEST CASE NAME: VM High Availability
   # DESCRIPTION: The prerequisite is to have VM HA configured, see details in OpenNebula documentation.

@@ -1,0 +1,92 @@
+---
+- name: "Read OpenNebula host {{ _vvn_host_id }}"
+  ansible.builtin.command: "onehost show {{ _vvn_host_id }} -j"
+  register: _vvn_onehost_raw
+  changed_when: false
+  become: true
+  become_user: oneadmin
+
+- name: Resolve active-test hypervisor delegate
+  ansible.builtin.set_fact:
+    _vvn_onehost: "{{ _vvn_onehost_raw.stdout | from_json }}"
+    _vvn_onehost_name: "{{ (_vvn_onehost_raw.stdout | from_json).HOST.NAME }}"
+    _vvn_onehost_state: "{{ ((_vvn_onehost_raw.stdout | from_json).HOST.STATE | int) }}"
+    _vvn_onehost_schedulable: >-
+      {{ (((_vvn_onehost_raw.stdout | from_json).HOST.STATE | int) in [1, 2]) }}
+    _vvn_onehost_runtime_name: >-
+      {{ host_name_to_hostname_cmd.get(
+           (_vvn_onehost_raw.stdout | from_json).HOST.NAME,
+           (_vvn_onehost_raw.stdout | from_json).HOST.NAME) }}
+    _vvn_delegate_host: >-
+      {{ _vvn_runtime_to_inventory.get(
+           host_name_to_hostname_cmd.get(
+             (_vvn_onehost_raw.stdout | from_json).HOST.NAME,
+             (_vvn_onehost_raw.stdout | from_json).HOST.NAME),
+           (_vvn_onehost_raw.stdout | from_json).HOST.NAME) }}
+
+- name: Record non-schedulable host as skipped
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      VM vNIC NUMA locality {{ _vvn_onehost_name }}{{ current_cluster.report_suffix }}
+    result_value: >-
+      skipped — OpenNebula host state {{ _vvn_onehost_state }} is not schedulable
+  when: not (_vvn_onehost_schedulable | bool)
+
+- name: "Read NUMA topology from {{ _vvn_onehost_name }}"
+  ansible.builtin.shell:
+    cmd: |
+      python3 - <<'PY'
+      import glob
+      import json
+      import os
+      import re
+
+      nodes = []
+      for path in sorted(glob.glob('/sys/devices/system/node/node[0-9]*')):
+          m = re.search(r'node(\d+)$', path)
+          if m:
+              nodes.append(int(m.group(1)))
+
+      hugepage_kb = None
+      try:
+          with open('/proc/meminfo') as f:
+              for line in f:
+                  if line.startswith('Hugepagesize:'):
+                      hugepage_kb = int(line.split()[1])
+                      break
+      except Exception:
+          pass
+
+      print(json.dumps({
+          'nodes': nodes,
+          'hugepage_kb': hugepage_kb,
+          'hugepage_mb': (hugepage_kb // 1024) if hugepage_kb else None,
+      }))
+      PY
+    executable: /bin/bash
+  delegate_to: "{{ _vvn_delegate_host }}"
+  register: _vvn_host_topology_raw
+  changed_when: false
+  when: _vvn_onehost_schedulable | bool
+
+- name: Parse active-test host NUMA topology
+  ansible.builtin.set_fact:
+    _vvn_host_topology: "{{ _vvn_host_topology_raw.stdout | from_json }}"
+    _vvn_selected_nodes: >-
+      {{ (_vvn_host_topology_raw.stdout | from_json).nodes
+         if ((_vvn_config.test_numa_nodes | string) == 'all')
+         else (_vvn_config.test_numa_nodes | list | map('int') | list) }}
+  when: _vvn_onehost_schedulable | bool
+
+- name: "Validate requested NUMA nodes on {{ _vvn_onehost_name }}"
+  ansible.builtin.include_tasks: active_node.yml
+  loop: "{{ _vvn_selected_nodes }}"
+  loop_control:
+    loop_var: _vvn_numa_node
+    label: "{{ _vvn_onehost_name }} numa={{ _vvn_numa_node }}"
+  when:
+    - _vvn_onehost_schedulable | bool
+    - (_vvn_numa_node | int) in (_vvn_host_topology.nodes | map('int') | list)

@@ -1,5 +1,18 @@
 ---
-_host_reboot_defaults:
-  reboot_timeout: 600
-  monitoring_timeout: 600
-  poll_interval: 10
+validation:
+  run_host_reboot: false
+  host_reboot:
+    # Target node inventory name. If empty, defaults to the first host in node_group
+    target_nodes: "all"
+    reboot_timeout: 600
+    connect_timeout: 10
+    monitored_wait_retries: 30
+    monitored_wait_delay: 10
+    required_services:
+      - name: libvirtd.service
+        desc: Libvirt daemon
+    check_journal_errors: true
+    journal_priority: "err"
+    journal_exclude_patterns:
+      - "ACPI BIOS Error"
+      - "pci.*aer"

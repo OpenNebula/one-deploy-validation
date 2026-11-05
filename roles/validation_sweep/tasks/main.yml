@@ -44,7 +44,7 @@
     odv_sweep_results: >-
       {{ (odv_sweep_results | d([])) + [item | combine({
            'action': ('kept (by flag)' if item.action == 'keep-by-flag' else 'kept (reused)'),
-           'detail': '' })] }}
+           'detail': item.detail | d('') })] }}
   loop: "{{ _sweep_plan | selectattr('action', 'in', ['keep-reused', 'keep-by-flag']) | list }}"
   loop_control: { label: "{{ item.type }}:{{ item.name }}" }
   when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host

@@ -1,0 +1,227 @@
+---
+- name: "Check if {{ selected_node }} hosts any Frontend VM"
+  ansible.builtin.shell: |
+    virsh list --name 2>/dev/null | grep -E -w "^({{ _protected_frontend_names | join('|') }})$"
+  delegate_to: "{{ selected_node }}"
+  register: fe_colocated_check
+  failed_when: false
+  changed_when: false
+
+- name: "Record: Skip {{ selected_node }} because it hosts a Frontend"
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "[{{ selected_node }}] Node reboot"
+    result_value: "skipped — hypervisor hosts an OpenNebula Frontend"
+    result_comment: "Rebooting this node would terminate the OpenNebula control plane ({{ fe_colocated_check.stdout | trim }})"
+  when: fe_colocated_check.rc == 0
+
+- name: "Host reboot verification harness for {{ selected_node }}"
+  when: fe_colocated_check.rc != 0
+  block:
+    - name: "Resolve OpenNebula host ID for {{ selected_node }}"
+      ansible.builtin.set_fact:
+        target_host_id: >-
+          {%- set match = _hr_host_pool.stdout | d('') | from_json
+              | json_query("HOST_POOL.HOST[?NAME=='" ~ selected_node ~ "' || TEMPLATE.HOSTNAME=='" ~ selected_node ~ "'].ID | [0]") -%}
+          {{ match | d('', true) }}
+
+    # Phase 1: Pre-Reboot Baselines & Isolation
+    - name: "Capture pre-reboot boot_id from {{ selected_node }}"
+      ansible.builtin.slurp:
+        src: /proc/sys/kernel/random/boot_id
+      delegate_to: "{{ selected_node }}"
+      register: pre_boot_id
+      failed_when: false
+
+    - name: "Manifest: register target host reboot action for {{ selected_node }}"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: host_reboot
+        manifest_id: "{{ target_host_id | d('?') }}"
+        manifest_name: "{{ selected_node }}"
+        manifest_cluster: "{{ hr_cluster.name | d('') }}"
+        manifest_role: host-reboot
+        manifest_disposition: kept
+        manifest_detail: "Checked services: {{ validation.host_reboot.required_services | map(attribute='name') | join(', ') }}"
+
+    - name: "Set host {{ selected_node }} offline in OpenNebula"
+      become: true
+      become_user: oneadmin
+      ansible.builtin.command: "onehost offline {{ target_host_id }}"
+      when: target_host_id | length > 0
+      failed_when: false
+
+    # Phase 2: Reboot Trigger & Recovery Wait
+    - name: "Reboot hypervisor node {{ selected_node }}"
+      ansible.builtin.reboot:
+        msg: "Reboot triggered by OpenNebula host_reboot_validation role"
+        connect_timeout: "{{ validation.host_reboot.connect_timeout }}"
+        reboot_timeout: "{{ validation.host_reboot.reboot_timeout }}"
+        pre_reboot_delay: 2
+        post_reboot_delay: 15
+        test_command: whoami
+      delegate_to: "{{ selected_node }}"
+      register: reboot_outcome
+      failed_when: false
+
+    # Phase 3: Post-Reboot Verification on Hypervisor
+    - name: "Capture post-reboot boot_id from {{ selected_node }}"
+      ansible.builtin.slurp:
+        src: /proc/sys/kernel/random/boot_id
+      delegate_to: "{{ selected_node }}"
+      register: post_boot_id
+      failed_when: false
+
+    - name: "Check required post-reboot services on {{ selected_node }}"
+      ansible.builtin.systemd:
+        name: "{{ svc.name }}"
+      delegate_to: "{{ selected_node }}"
+      register: node_services_state
+      failed_when: false
+      loop: "{{ validation.host_reboot.required_services }}"
+      loop_control:
+        loop_var: svc
+        label: "{{ svc.name }}"
+
+    - name: "Collect journal errors from {{ selected_node }} for current boot"
+      when: validation.host_reboot.check_journal_errors | d(true)
+      ansible.builtin.shell: |
+        journalctl -b 0 -p {{ validation.host_reboot.journal_priority | d('err') }} --no-pager -o short-precise
+      delegate_to: "{{ selected_node }}"
+      register: post_boot_journal
+      failed_when: false
+      changed_when: false
+
+    - name: "Filter journal errors for {{ selected_node }}"
+      when: validation.host_reboot.check_journal_errors | d(true)
+      ansible.builtin.set_fact:
+        _journal_filtered_errors: >-
+          {%- set raw = post_boot_journal.stdout_lines | default([]) -%}
+          {%- set excludes = validation.host_reboot.journal_exclude_patterns | default([]) -%}
+          {%- set filtered = [] -%}
+          {%- for line in raw -%}
+            {%- set ns = namespace(matched=false) -%}
+            {%- for pattern in excludes -%}
+              {%- if line | regex_search(pattern) -%}
+                {%- set ns.matched = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if not ns.matched and line | trim | length > 0 -%}
+              {%- set _ = filtered.append(line | trim) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ filtered }}
+
+    # Phase 4: OpenNebula Reconciliation & Polling
+    - name: "Re-enable host {{ selected_node }} in OpenNebula"
+      become: true
+      become_user: oneadmin
+      ansible.builtin.shell: |
+        onehost enable "{{ target_host_id }}"
+        onehost forceupdate "{{ target_host_id }}"
+      when: target_host_id | length > 0
+      failed_when: false
+
+    - name: "Poll OpenNebula host monitoring state for {{ selected_node }} until MONITORED ('on')"
+      become: true
+      become_user: oneadmin
+      ansible.builtin.shell: |
+        onehost list -f ID={{ target_host_id }} -l STAT --no-header | tr -d ' '
+      register: host_monitored_check
+      until: host_monitored_check.stdout | trim in ['on', 'MONITORED']
+      retries: "{{ validation.host_reboot.monitored_wait_retries }}"
+      delay: "{{ validation.host_reboot.monitored_wait_delay }}"
+      when: target_host_id | length > 0
+      failed_when: false
+
+    # Phase 5: Evaluation & Reporting
+    - name: "Evaluate reboot criteria for {{ selected_node }}"
+      ansible.builtin.set_fact:
+        _boot_id_changed: >-
+          {{ (pre_boot_id.content | default('1')) != (post_boot_id.content | default('2')) }}
+        _one_monitored: >-
+          {{ (host_monitored_check.stdout | default('') | trim) in ['on', 'MONITORED'] }}
+
+    - name: "Record: Kernel boot ID transition ({{ selected_node }})"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "[{{ selected_node }}] Node reboot boot_id transition"
+        result_value: "{{ 'ok' if _boot_id_changed | bool else 'failed' }}"
+        result_comment: "{{ '' if _boot_id_changed | bool else 'boot_id did not change post-reboot' }}"
+
+    - name: "Record: Individual post-reboot services ({{ selected_node }})"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        _svc_item: "{{ item.svc | d(item.item) }}"
+        _is_active: "{{ (item.status.ActiveState | d('')) == 'active' }}"
+        result_key: "[{{ selected_node }}] {{ _svc_item.desc | d(_svc_item.name) }} ({{ _svc_item.name }}) active post-reboot"
+        result_value: "{{ 'ok' if _is_active else 'failed' }}"
+        result_comment: >-
+          {{
+            '' if _is_active else
+            ('State: ' ~ (item.status.ActiveState | d('not-found')) ~
+            ', Load: ' ~ (item.status.LoadState | d('unknown')))
+          }}
+      loop: "{{ node_services_state.results | d([]) }}"
+      loop_control:
+        loop_var: item
+        label: "{{ (item.svc | d(item.item)).name }}"
+
+    - name: "Record: Journalctl boot error check ({{ selected_node }})"
+      when: validation.host_reboot.check_journal_errors | d(true)
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        _err_count: "{{ (_journal_filtered_errors | default([])) | length }}"
+        _is_clean: "{{ _err_count | int == 0 }}"
+        result_key: "[{{ selected_node }}] System journal post-reboot error check"
+        result_value: "{{ 'ok' if _is_clean else 'failed' }}"
+        result_comment: |
+          {% if not _is_clean -%}
+          Found {{ _err_count }} error entries in journal:
+          {% for err in _journal_filtered_errors | default([]) -%}
+          - {{ err }}
+          {% endfor -%}
+          {% endif %}
+
+    - name: "Record: OpenNebula node re-monitoring ({{ selected_node }})"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "[{{ selected_node }}] OpenNebula node re-monitoring"
+        result_value: "{{ 'ok' if _one_monitored | bool else 'failed' }}"
+        result_comment: "{{ '' if _one_monitored | bool else ('Final host state: ' ~ (host_monitored_check.stdout | d('unknown') | trim)) }}"
+
+  rescue:
+    - name: "Record host reboot validation failure for {{ selected_node }}"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "Host reboot on {{ selected_node }}"
+
+  always:
+    - name: "Always: Ensure {{ selected_node }} is re-enabled in OpenNebula"
+      become: true
+      become_user: oneadmin
+      ansible.builtin.shell: |
+        st=$(onehost list -f ID={{ target_host_id }} -l STAT --no-header 2>/dev/null | tr -d ' ')
+        case "$st" in
+          dsbl|off|offline|disabled)
+            onehost enable "{{ target_host_id }}" && onehost forceupdate "{{ target_host_id }}"
+            echo "re-enabled (was $st)" ;;
+          *) echo "left untouched (state $st)" ;;
+        esac
+      when: target_host_id is defined and target_host_id | length > 0
+      register: reboot_always_reenable
+      failed_when: false

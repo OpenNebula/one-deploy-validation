@@ -7,6 +7,7 @@ See the [test catalog](../README.md#test-catalog) in the main README for enabler
 
 - [VM instantiation](test_vm.md)
 - [Core Services](validation.md)
+- [Host reboot](host_reboot.md)
 - [Networking subsystem](network_validation.md)
 - [Storage benchmark](storage-benchmark.md)
 - [Network benchmark](network-benchmark.md)

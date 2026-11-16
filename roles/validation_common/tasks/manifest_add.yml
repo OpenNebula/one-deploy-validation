@@ -23,6 +23,7 @@
            'cluster': manifest_cluster | d(''),
            'role': manifest_role,
            'disposition': manifest_disposition | d('created'),
+           'detail': manifest_detail | d(''),
            'host': inventory_hostname }] }}
 
 - name: "Manifest: mirror to /tmp/odv_manifest.json"

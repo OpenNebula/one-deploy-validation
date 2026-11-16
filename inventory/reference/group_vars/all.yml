@@ -40,7 +40,7 @@ validation:
 
   # TEST CASE NAME: Core Services
   # DESCRIPTION: Check the status of OpenNebula core services, as listed in `service_list`,
-  # also tests the resilience of some of them by restarting. 
+  # also tests the resilience of some of them by restarting.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_core_services: true
   core_services:
@@ -58,6 +58,63 @@ validation:
         desc: OpenNebula Fireedge GUI
       # Add other services if more should be checked.
     check_fireedge_ui: true
+
+  # TEST CASE NAME: Host Reboot
+  # DESCRIPTION: Reboot selected nodes and check that required services start
+  # and the host is monitored again.
+  # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+  run_host_reboot: false
+  host_reboot:
+    # Which hypervisor node(s) to test.
+    # Can be a single inventory hostname (e.g., "node01"), a YAML list of hosts,
+    # a comma-separated string (e.g., "node1, node2"), or "all" to target
+    # every host in the 'node' group sequentially.
+    target_nodes: "all"
+    # Maximum time (in seconds) to wait for the node to come back online
+    # and accept an SSH connection after the reboot command is issued.
+    reboot_timeout: 600
+    # Maximum time (in seconds) for each individual SSH connection attempt
+    # while polling the node during the reboot recovery phase.
+    connect_timeout: 10
+    # The number of times to poll the OpenNebula frontend to check if the
+    # rebooted node has successfully returned to the 'MONITORED' ('on') state.
+    monitored_wait_retries: 30
+    # The delay (in seconds) between each monitoring poll attempt.
+    # Total maximum wait time = monitored_wait_retries * monitored_wait_delay.
+    monitored_wait_delay: 10
+    # A list of systemd services that must be active (running) on the node
+    # after it boots up in order for the test to pass.
+    required_services:
+      # The exact systemd unit name to verify (e.g., libvirtd.service).
+      - name: libvirtd.service
+        # A human-readable description used in the final PDF report.
+        desc: Libvirt daemon
+      #- name: opennebula-node-exporter.service
+      #  desc: OpenNebula Node Exporter daemon
+      #- name: opennebula-libvirt-exporter.service
+      #  desc: OpenNebula Libvirt Exporter daemon
+      #- name: opennebula-lvm-exporter.service
+      #  desc: OpenNebula LVM Exporter daemon
+      #- name: opennebula-smartctl-exporter.service
+      #  desc: OpenNebula smartctl Exporter daemon
+      #- name: opennebula-ovs.service
+      #  desc: OpenNebula OVS daemon
+
+    # Enable or disable post-boot systemd journal inspection.
+    # When true, queries journalctl on the rebooted hypervisor exclusively
+    # for the boot cycle that just finished (-b 0).
+    check_journal_errors: true
+    # The severity log level threshold passed to `journalctl -p <priority>`.
+    # Accepts systemd log levels: "emerg" (0), "alert" (1), "crit" (2), or "err" (3).
+    # Any log entry matching this priority or higher is flagged as a failure.
+    journal_priority: "err"
+    # List of regex patterns to suppress and filter out from flagged errors.
+    # Useful for ignoring benign hardware quirks, cosmetic BIOS bugs, or known lab noise
+    # (e.g., harmless ACPI table mismatches, non-fatal PCI AER errors, or drive SMART noise)
+    # so they do not cause false-positive validation failures.
+    journal_exclude_patterns:
+      - "ACPI BIOS Error"
+      - "pci.*aer"
 
   # CLEANUP BEHAVIOR: the suite always removes every resource it created
   # (VMs, vnets, flow services, exported images/templates, files, packages),
@@ -348,7 +405,7 @@ validation:
           NETWORK="YES",
           REPORT_READY="YES",
           SSH_PUBLIC_KEY="$USER[SSH_PUBLIC_KEY]",
-          TOKEN="YES" 
+          TOKEN="YES"
         ]
     create_vnet: false
     vnet_name: 'public'

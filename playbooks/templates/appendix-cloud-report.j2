@@ -340,11 +340,12 @@
 {% set deployment_other_components = 'None detected' %}
 {% set deployment_applications = 'OpenNebula command line tool' %}
 
-{% set ns = namespace(core_services=[], vm_tests=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], other=[]) %}
+{% set ns = namespace(core_services=[], vm_tests=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], host_reboot=[], other=[]) %}
 {% for k, v in checks.items() %}
   {% set kl = k | lower %}
   {% if 'oneflow' in kl %}{% set _ = ns.oneflow.append((k, v)) %}
   {% elif 'ldap' in kl or 'rpc2' in kl %}{% set _ = ns.ldap.append((k, v)) %}
+  {% elif 'reboot' in kl or 'node re-monitoring' in kl %}{% set _ = ns.host_reboot.append((k, v)) %}
   {% elif 'service' in kl or 'xml-rpc' in kl or 'oned version' in kl or 'repository' in kl or 'datastore' in kl or 'marketplace' in kl or 'registered kvm' in kl or 'hosts status' in kl %}{% set _ = ns.core_services.append((k, v)) %}
   {% elif 'test vm' in kl or ('storage' in kl and 'benchmark' not in kl) or 'template' in kl %}{% set _ = ns.vm_tests.append((k, v)) %}
   {% elif 'vm ha' in kl or 'fencing' in kl or 'host error' in kl %}{% set _ = ns.vm_ha.append((k, v)) %}
@@ -482,6 +483,7 @@
   {{ render_check_table(ns.vm_ha, "VM High Availability", "vmha") }}
   {{ render_check_table(ns.fe_ha, "Frontend High Availability", "feha") }}
   {{ render_check_table(ns.federation, "Federation Configuration", "federation") }}
+  {{ render_check_table(ns.host_reboot, "Host Reboot Validation", "host_reboot") }}
   {{ render_check_table(ns.other, "Other Checks", "other") }}
 
   {% if all_federation_results is defined and all_federation_results | length > 0 %}
@@ -854,6 +856,8 @@
      prefixes = report-key prefixes owned by the test: harness main key first,
      legacy per-check keys after. #}
   {% set exec_tests = [
+    {'label': 'Host reboot',          'flag': validation_vars.run_host_reboot | default(false),
+     'prefixes': ['Host reboot', 'Node reboot', 'OpenNebula node re-monitoring', 'post-reboot']},
     {'label': 'Test VM',             'flag': validation_vars.run_test_vm | default(true),
      'prefixes': ['Test VM', 'Test network creation', 'Connection to the test VM']},
     {'label': 'Storage benchmark',   'flag': validation_vars.run_storage_benchmark | default(true),
@@ -866,7 +870,7 @@
      'prefixes': ['VM lifecycle']},
     {'label': 'Network benchmark',   'flag': validation_vars.run_network_benchmark | default(true),
      'prefixes': ['Network benchmark']},
-    {'label': 'DPDK PCI allowlist',  'flag': validation_vars.run_dpdk_pci_allowlist | default(false),
+    {'label': 'DPDK PCI allowlist',   'flag': validation_vars.run_dpdk_pci_allowlist | default(false),
      'prefixes': ['DPDK PCI allowlist']},
     {'label': 'DPDK PCI driver binding', 'flag': validation_vars.run_dpdk_pci_driver_validation | default(false),
      'prefixes': ['DPDK PCI driver']},
@@ -890,8 +894,6 @@
      'prefixes': ['OneFlow']},
     {'label': 'LDAP authentication', 'flag': validation_vars.run_ldap_auth | default(false),
      'prefixes': ['LDAP', 'OpenNebula LDAP auth driver', 'OpenNebula group mapping', 'XML-RPC (RPC2) login (LDAP)', 'FireEdge UI login (LDAP)', 'Local auth fallback']},
-    {'label': 'Host reboot',         'flag': validation_vars.run_host_reboot | default(false),
-     'prefixes': ['Host reboot: monitoring recovery']},
     {'label': 'VM HA',               'flag': validation_vars.run_vm_ha | default(false),
      'prefixes': ['VM HA']},
     {'label': 'FE HA',               'flag': validation_vars.run_fe_ha | default(false),

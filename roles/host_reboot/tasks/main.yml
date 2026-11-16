@@ -1,76 +1,101 @@
 ---
-- name: Host reboot skipped because cluster discovery failed
+- name: "Host reboot validation: skip - cluster discovery failed"
   ansible.builtin.include_role:
     name: validation_common
     tasks_from: record_result.yml
-    apply:
-      tags: [host_reboot]
   vars:
-    result_key: "Host reboot: monitoring recovery"
+    result_key: "Host reboot validation"
     result_value: "skipped - cluster discovery failed"
-  when: odv_discovery_failed | d(false)
-
-- name: Initialize host reboot validation
-  ansible.builtin.set_fact:
-    _hr_config: "{{ _host_reboot_defaults | combine(validation.host_reboot | d({})) }}"
-    host_reboot_failed: false
-    _hr_node_hostnames: >-
-      {%- set names = {} -%}
-      {%- for node in groups[node_group | d('node')] | d([]) -%}
-        {%- set _ = names.update({node: hostvars[node].hostname_cmd | d('')}) -%}
-      {%- endfor -%}
-      {{ names }}
-  when: not (odv_discovery_failed | d(false))
-
-- name: Check host reboot configuration
-  ansible.builtin.set_fact:
-    _hr_config_valid: >-
-      {{ (_hr_config.reboot_timeout | int) > 0
-         and (_hr_config.monitoring_timeout | int) > 0
-         and (_hr_config.poll_interval | int) > 0 }}
-  when: not (odv_discovery_failed | d(false))
-
-- name: Record invalid host reboot configuration
-  ansible.builtin.include_role:
-    name: validation_common
-    tasks_from: record_result.yml
-    apply:
-      tags: [host_reboot]
-  vars:
-    result_key: "Host reboot: monitoring recovery"
-    result_value: "failed"
-    result_comment: "reboot_timeout, monitoring_timeout and poll_interval must be positive seconds"
   when:
-    - not (odv_discovery_failed | d(false))
-    - not (_hr_config_valid | bool)
+    - validation.run_host_reboot | d(false)
+    - hostvars[groups[frontend_group | d('frontend')][0]].odv_discovery_failed | d(false)
 
-- name: Stop disruptive tests after invalid host reboot configuration
-  ansible.builtin.set_fact:
-    host_reboot_failed: true
+- name: Initialize host reboot validation logic
   when:
-    - not (odv_discovery_failed | d(false))
-    - not (_hr_config_valid | bool)
+    - validation.run_host_reboot | d(false)
+    - not (hostvars[groups[frontend_group | d('frontend')][0]].odv_discovery_failed | d(false))
+    - inventory_hostname == groups[frontend_group | d('frontend')][0]
+  block:
+    - name: Parse user target preference
+      ansible.builtin.set_fact:
+        _hr_target_preference: >-
+          {%- set raw = validation.host_reboot.target_nodes | d('all') -%}
+          {%- if raw == 'all' or raw == ['all'] or raw == '' or raw == [] -%}
+            {{ groups[node_group | d('node')] | default([]) }}
+          {%- elif raw is string -%}
+            {{ raw.split(',') | map('trim') | reject('equalto', '') | list }}
+          {%- elif raw is sequence -%}
+            {{ raw }}
+          {%- else -%}
+            []
+          {%- endif -%}
 
-- name: Read current OpenNebula host pool
-  ansible.builtin.command: onehost list -j
-  become: true
-  become_user: oneadmin
-  register: _hr_host_pool
-  changed_when: false
-  failed_when: false
-  when:
-    - not (odv_discovery_failed | d(false))
-    - _hr_config_valid | bool
+    - name: Build list of frontend names to protect
+      ansible.builtin.set_fact:
+        _protected_frontend_names: >-
+          {{
+            groups[frontend_group | d('frontend')]
+            | map('extract', hostvars)
+            | map(attribute='inventory_hostname')
+            | list
+          }}
 
-- name: Validate one reboot per cluster
-  ansible.builtin.include_tasks: per_cluster.yml
-  args:
-    apply:
-      tags: [host_reboot]
-  loop: "{{ one_clusters | d([]) }}"
-  loop_control:
-    loop_var: hr_cluster
-    label: "{{ hr_cluster.name }}"
-  when:
-    - not (odv_discovery_failed | d(false))
-    - _hr_config_valid | bool
+    - name: Read current OpenNebula host pool
+      ansible.builtin.command: onehost list -j
+      become: true
+      become_user: oneadmin
+      register: _hr_host_pool
+      changed_when: false
+      failed_when: false
+
+    - name: Record failure if OpenNebula API is unresponsive
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Host reboot validation"
+        result_value: "failed"
+        result_comment: "Failed to read onehost pool from frontend"
+      when: _hr_host_pool.rc != 0
+
+    - name: "Record skip if no target nodes found"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Host reboot validation"
+        result_value: "skipped — no target nodes found in inventory"
+      when:
+        - _hr_host_pool.rc == 0
+        - (_hr_target_preference | length) == 0
+
+    - name: Run sequential reboot verification across target hypervisors
+      ansible.builtin.include_tasks: host_reboot_node.yml
+      loop: "{{ _hr_target_preference }}"
+      loop_control:
+        loop_var: selected_node
+        label: "{{ selected_node }}"
+      when:
+        - _hr_host_pool.rc == 0
+        - (_hr_target_preference | length) > 0
+
+    - name: Record aggregate host reboot validation result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        _failed_checks: >-
+          {{
+            (verification_result | default({})) | dict2items
+            | rejectattr('key', 'equalto', 'Host reboot validation')
+            | selectattr('key', 'search', 'reboot|re-monitoring|System journal')
+            | selectattr('value', 'string')
+            | selectattr('value', 'search', 'failed|error')
+            | map(attribute='key') | list
+          }}
+        result_key: "Host reboot validation"
+        result_value: "{{ 'failed' if (_failed_checks | length > 0) else 'ok' }}"
+        result_comment: "{{ '' if (_failed_checks | length == 0) else ('Failed checks: ' ~ (_failed_checks | join(', '))) }}"
+      when:
+        - _hr_host_pool.rc == 0
+        - (_hr_target_preference | length) > 0

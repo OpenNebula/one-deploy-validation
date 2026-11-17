@@ -1,0 +1,32 @@
+---
+- name: Initialize independent Grafana stop/start settings
+  ansible.builtin.set_fact:
+    _obs_grafana_restart: "{{ observability_grafana_restart_defaults | combine(observability_grafana_restart | d({})) }}"
+    _obs_grafana_hosts: "{{ _obs_grafana_group_hosts }}"
+    _obs_grafana_abort: "{{ _obs_ha_abort | d(false) }}"
+
+- name: Record Grafana scenario skipped after leader scenario failure
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / Grafana service stop-start"
+    result_value: "skipped — leader failover or recovery failed; no further stops attempted"
+  when: _obs_grafana_abort
+
+- name: Record missing Grafana inventory group
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / Grafana service stop-start"
+    result_value: failed
+    result_comment: "No hosts in the configured Grafana group."
+  when: _obs_grafana_hosts | length == 0
+
+- name: Stop and recover each Grafana instance sequentially
+  ansible.builtin.include_tasks: ha/grafana_host.yml
+  loop: "{{ _obs_grafana_hosts }}"
+  loop_control:
+    loop_var: _obs_grafana_host
+  when: not _obs_grafana_abort

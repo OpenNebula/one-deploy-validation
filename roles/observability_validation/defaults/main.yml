@@ -1,0 +1,103 @@
+---
+# Credentials belong in observability_auth (prefer Ansible Vault), never validation.
+observability_defaults:
+  require_grafana: true
+  require_grafana_auth: true
+  timeout: 5
+  attempts: 3
+  delay: 2
+  max_sample_age: 120
+  validate_certs: true
+  prometheus_url: http://127.0.0.1:9090
+  alertmanager_url: http://127.0.0.1:9093
+  grafana_url: http://127.0.0.1:3000
+  grafana_datasource: prometheus
+  grafana_require_datasource_url: false
+  dashboards: [OpenNebula, Hosts, Virtual Machine]
+  expected_exporters:
+    frontend: [node, opennebula, mysql]
+    node: [node, libvirt, lvm]
+  additional_exporters: []
+  exporters:
+    node:
+      unit: opennebula-node-exporter
+      port: 9100
+      job: node_exporter
+      metrics: ['node_uname_info', 'node_memory_MemTotal_bytes']
+    opennebula:
+      unit: opennebula-exporter
+      port: 9925
+      job: opennebula_exporter
+      metrics: ['opennebula_host_total']
+    libvirt:
+      unit: opennebula-libvirt-exporter
+      port: 9926
+      job: libvirt_exporter
+      metrics: ['opennebula_libvirt_daemon_up']
+    mysql:
+      unit: opennebula-mysql-exporter
+      port: 9104
+      job: mysql_exporter
+      metrics: ['mysql_up']
+    lvm:
+      unit: opennebula-lvm-exporter
+      port: 9845
+      job: lvm_exporter
+      metrics: []
+    smartctl:
+      unit: opennebula-smartctl-exporter
+      port: 9633
+      job: smartctl_exporter
+      metrics: []
+    ovs:
+      unit: opennebula-ovs-exporter
+      port: 9475
+      job: ovs_exporter
+      metrics: []
+
+# Explicitly enabled separately from the read-only monitoring checks.
+observability_alert_defaults:
+  enabled: false
+  wait_timeout: 180
+  poll_interval: 2
+  prometheus_config: /etc/one/prometheus/prometheus.yml
+  rules_file: /etc/one/prometheus/rules.yml
+  alertmanager_config: /etc/one/alertmanager/alertmanager.yml
+  prometheus_service: opennebula-prometheus
+  alertmanager_service: opennebula-alertmanager
+  promtool: /usr/bin/promtool
+  amtool: /usr/bin/amtool
+  backup_dir: /var/tmp
+
+observability_ha_defaults:
+  enabled: false
+  zone: OpenNebula
+  retries: 36
+  delay: 5
+  recovery_retries: 60
+  grafana_vip: auto
+  prometheus_port: 9090
+  alertmanager_port: 9093
+  grafana_port: 3000
+  vip_scheme: http
+  oned_service: opennebula.service
+  prometheus_service: opennebula-prometheus.service
+  alertmanager_service: opennebula-alertmanager.service
+
+observability_grafana_restart_defaults:
+  enabled: false
+  service: grafana-server.service
+  retries: 36
+  delay: 5
+
+observability_auth:
+  grafana:
+    token: "{{ lookup('ansible.builtin.env', 'GRAFANA_TOKEN') }}"
+    username: "{{ lookup('ansible.builtin.env', 'GRAFANA_USER') | default('admin', true) }}"
+    password: "{{ lookup('ansible.builtin.env', 'GRAFANA_PASSWORD') | default('admin', true) }}"
+
+observability_vm_defaults:
+  retries: 30
+  delay: 10
+  cleanup_retries: 12
+  cleanup_delay: 5

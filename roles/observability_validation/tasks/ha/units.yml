@@ -1,0 +1,21 @@
+---
+- name: "Confirm {{ _obs_ha_service_host }} units are {{ _obs_ha_unit_state }}"
+  ansible.builtin.command:
+    argv: [systemctl, show, "{{ item }}", --property=ActiveState, --value]
+  loop: "{{ _obs_ha_check_units }}"
+  delegate_to: "{{ _obs_ha_service_host }}"
+  register: _obs_ha_unit_check
+  changed_when: false
+  ignore_unreachable: true
+  until: >-
+    _obs_ha_unit_check.rc | d(1) == 0 and
+    _obs_ha_unit_check.stdout | d('') | trim == _obs_ha_unit_state
+  retries: "{{ _obs_ha_retries | d(12) }}"
+  delay: "{{ _obs_ha_delay | d(5) }}"
+
+- name: Ensure every unit state was checked successfully
+  ansible.builtin.assert:
+    that:
+      - _obs_ha_unit_check.results | d([]) | length == _obs_ha_check_units | length
+      - _obs_ha_unit_check.results | selectattr('unreachable', 'defined') | selectattr('unreachable') | list | length == 0
+      - _obs_ha_unit_check.results | map(attribute='stdout', default='') | map('trim') | reject('equalto', _obs_ha_unit_state) | list | length == 0

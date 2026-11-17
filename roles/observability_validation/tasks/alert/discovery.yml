@@ -1,0 +1,23 @@
+---
+- name: Read the source's actual Alertmanager discovery
+  ansible.builtin.include_tasks: alert/http.yml
+  vars:
+    _obs_alert_peer: "{{ _obs_alert_source }}"
+    _obs_alert_service: prometheus
+    _obs_alert_path: /api/v1/alertmanagers
+    _obs_alert_check: discovery
+    _obs_expected_response: true
+
+- name: Require at least one active Alertmanager
+  ansible.builtin.assert:
+    that: _obs_alert_http.json.data.activeAlertmanagers | length > 0
+
+- name: Store the prepared receivers discovered by this Prometheus source
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine(source_update, recursive=true) }}"
+  vars:
+    destinations: >-
+      {{ _obs_alert_http.json.data.activeAlertmanagers
+         | odv_alertmanager_hosts(_obs_alert_states, _obs_alert_source) }}
+    source_update: "{{ {_obs_alert_source: {'destinations': destinations}} }}"
+  no_log: true

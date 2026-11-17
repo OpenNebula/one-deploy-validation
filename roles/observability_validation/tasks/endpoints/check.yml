@@ -1,0 +1,50 @@
+---
+- name: "Check {{ _obs_endpoint.name }}"
+  ansible.builtin.uri:
+    url: "{{ _obs_endpoint_config[_obs_endpoint.service ~ '_url'] | regex_replace('/$', '') }}{{ _obs_endpoint_path }}"
+    method: GET
+    status_code: 200
+    return_content: true
+    follow_redirects: none
+    use_netrc: false
+    use_proxy: false
+    validate_certs: "{{ _obs_endpoint_config.validate_certs }}"
+    timeout: "{{ _obs_endpoint_config.timeout }}"
+    headers: "{{ {'Authorization': 'Bearer ' ~ _obs_endpoint_credentials.token} if _obs_endpoint_credentials.token | d('') | length > 0 else {} }}"
+    url_username: "{{ _obs_endpoint_credentials.username | d(omit) if not _obs_endpoint_credentials.token | d('') else omit }}"
+    url_password: "{{ _obs_endpoint_credentials.password | d(omit) if not _obs_endpoint_credentials.token | d('') else omit }}"
+    force_basic_auth: "{{ not _obs_endpoint_credentials.token | d('') and _obs_endpoint_credentials.username | d('') | length > 0 }}"
+  vars:
+    _obs_endpoint_credentials: "{{ _obs_endpoint_auth[_obs_endpoint.service] | d({}) }}"
+    _obs_endpoint_valid: >-
+      {{ _obs_endpoint_http.status | d(0) == 200 and
+      (_obs_endpoint.check != 'database' or (_obs_endpoint_http.json | d({})).get('database', '') == 'ok') and
+      (_obs_endpoint.check != 'config' or (_obs_endpoint_http.json | d({})).get('config', {}).get('original', '') | length > 0) }}
+  delegate_to: "{{ _obs_endpoint_host }}"
+  loop: "{{ _obs_endpoint.paths }}"
+  loop_control:
+    loop_var: _obs_endpoint_path
+  register: _obs_endpoint_http
+  until: _obs_endpoint_valid
+  failed_when: not _obs_endpoint_valid
+  retries: "{{ [0, (_obs_endpoint_attempts | d(_obs_endpoint_config.attempts) | int) - 1] | max }}"
+  delay: "{{ _obs_endpoint_delay | d(_obs_endpoint_config.delay) }}"
+  changed_when: false
+  ignore_errors: true
+  ignore_unreachable: true
+  no_log: true
+
+- name: "Collect {{ _obs_endpoint.name }} result"
+  ansible.builtin.set_fact:
+    _obs_endpoint_results: "{{ _obs_endpoint_results + [finding] }}"
+  vars:
+    finding:
+      key: "Observability / {{ _obs_endpoint_subject }} / {{ _obs_endpoint.name }}"
+      value: "{{ 'ok' if _obs_endpoint_ok else 'failed' }}"
+      comment: "{{ '' if _obs_endpoint_ok else 'HTTP endpoint unavailable or required response fields invalid' }}"
+    _obs_endpoint_ok: >-
+      {{ not (_obs_endpoint_http.failed | d(false)) and not (_obs_endpoint_http.unreachable | d(false))
+         and _obs_endpoint_http.results | d([]) | length == _obs_endpoint.paths | length
+         and _obs_endpoint_http.results | d([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0
+         and _obs_endpoint_http.results | d([]) | selectattr('unreachable', 'defined') | selectattr('unreachable') | list | length == 0
+         and _obs_endpoint_http.results | d([]) | map(attribute='status', default=0) | reject('equalto', 200) | list | length == 0 }}

@@ -1,0 +1,69 @@
+---
+- name: Build host-local observability configuration
+  ansible.builtin.set_fact:
+    odv_observability_config: >-
+      {{ observability_defaults | combine({'version': one_version | d('')}, recursive=true)
+         | combine(observability | d({}), recursive=true)
+         | combine({'host': inventory_hostname, 'roles': _obs_roles,
+                    'aliases': ([inventory_hostname, ansible_host | d(inventory_hostname)]
+                                 + (observability_aliases | d([]))) | unique}) }}
+  vars:
+    _obs_roles: >-
+      {{ (['frontend'] if inventory_hostname in _obs_frontend_hosts else [])
+         + (['node'] if inventory_hostname in _obs_node_hosts else [])
+         + (['grafana'] if inventory_hostname in _obs_grafana_group_hosts else []) }}
+
+- name: Record inventory coverage prerequisites
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / inventory topology"
+    result_value: >-
+      {{ 'ok' if (_obs_frontend_hosts | length > 0
+                  and _obs_node_hosts | length > 0
+                  and (not (odv_observability_config.require_grafana | bool)
+                       or _obs_grafana_group_hosts | length > 0)) else 'failed' }}
+    result_comment: "Expected frontend and node groups, plus grafana unless observability.require_grafana=false."
+
+- name: Check local HTTP endpoints with Ansible
+  ansible.builtin.include_tasks: endpoints/main.yml
+  vars:
+    _obs_endpoint_config: "{{ odv_observability_config }}"
+    _obs_endpoint_auth: "{{ observability_auth | d({}) }}"
+    _obs_endpoint_host: "{{ inventory_hostname }}"
+    _obs_endpoint_subject: "{{ inventory_hostname }}"
+    _obs_endpoint_roles: "{{ odv_observability_config.roles }}"
+
+- name: Probe exporter metrics and Grafana integration
+  observability_probe:
+    phase: local
+    config: "{{ odv_observability_config }}"
+    auth: "{{ observability_auth | d({}) }}"
+  register: odv_observability_local
+  failed_when: false
+  ignore_unreachable: true
+  changed_when: false
+
+- name: Combine endpoint and data findings for reporting and HA prerequisites
+  ansible.builtin.set_fact:
+    odv_observability_local: >-
+      {{ odv_observability_local | combine({'results': _obs_endpoint_results + (odv_observability_local.results | d([]))}) }}
+  when: odv_observability_local.results is defined
+
+- name: Record local probe transport failure
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / probe execution"
+    result_value: failed
+    result_comment: "Probe unavailable: check SSH access, privilege escalation and target Python."
+  when: odv_observability_local.results is not defined
+
+- name: Record local observability findings
+  ansible.builtin.include_tasks: record.yml
+  loop: "{{ odv_observability_local.results | d(_obs_endpoint_results) }}"
+  loop_control:
+    loop_var: _obs_result
+    label: "{{ _obs_result.key }}"

@@ -372,29 +372,41 @@
     - name: "Report template: reset accumulated verification_result/comments facts for the fixture render"
       ansible.builtin.set_fact:
         verification_result:
+          "Observability / fe-0 / node target scrape": "ok"
           "Test VM validation — cluster default": "ok"
           "Storage benchmark — cluster default": "failed"
           "GPU benchmark — cluster default": "skipped — no NVIDIA GPUs discovered"
           "Network benchmark iperf3 node1 -> node2": "warning - throughput below threshold"
-        verification_comments: {}
+        verification_comments:
+          "Observability / fe-0 / node target scrape": "health=up; scrape error=False"
 
     - name: "Report template: render fixture report (results + cleanup rows)"
       ansible.builtin.template:
         src: "{{ playbook_dir }}/../../playbooks/templates/appendix-cloud-report.j2"
         dest: "/tmp/odv_harness_report.html"
       vars: &odv_report_fixture_vars
+        monitoring_labels:
+          "Observability / fe-0 / node target scrape": "opennebula-node-exporter metrics collection"
+        monitoring_sections:
+          - id: frontend
+            title: "2. Frontend metrics collection"
+            checks:
+              - ["Observability / fe-0 / node target scrape", "ok"]
         repo_version: "harness-test"
         date: "2026-01-01 00:00:00"
         report_date_only: "2026-01-01"
         validation_vars:
+          run_observability: true
           run_test_vm: true
           run_storage_benchmark: true
         verification_result:
+          "Observability / fe-0 / node target scrape": "ok"
           "Test VM validation — cluster default": "ok"
           "Storage benchmark — cluster default": "failed"
           "GPU benchmark — cluster default": "skipped — no NVIDIA GPUs discovered"
           "Network benchmark iperf3 node1 -> node2": "warning - throughput below threshold"
-        verification_comments: {}
+        verification_comments:
+          "Observability / fe-0 / node target scrape": "health=up; scrape error=False"
         network_verification_results: {}
         conn_results_matrix: {}
         template_report_architecture: {}
@@ -454,6 +466,12 @@
             '<td class="matrix-bad">LEFTOVER</td><td>host left offline by fencing (host: node3)</td>' in _html
           - >-
             '<td colspan="6">(none)</td>' in _html_empty
+          - >-
+            'Observability</div>' in _html
+          - >-
+            '<span class="badge bp">PASS</span></td><td><div class="cn">opennebula-node-exporter metrics collection</div>' in _html
+          - >-
+            '<td>Observability</td><td><span class="badge bp">YES</span></td><td><span class="badge bp">OK</span></td>' in _html
         fail_msg: "Execution & Cleanup Summary section did not render as expected"
 
     # ---------------------------------------------------------------

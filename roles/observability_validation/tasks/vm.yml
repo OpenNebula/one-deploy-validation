@@ -1,0 +1,158 @@
+---
+# Explicit opt-in. Run on one frontend to avoid creating one VM per HA member.
+- name: Validate VM scenario settings
+  ansible.builtin.assert:
+    that:
+      - observability_vm.vm_id is not defined
+      - (observability_vm.template_id | d('') | string) is match('^[0-9]+$')
+    fail_msg: "Set numeric observability_vm.template_id. This scenario always creates a new VM; vm_id is not supported."
+
+- name: Initialize VM scenario
+  ansible.builtin.set_fact:
+    _obs_vm_id: ""
+    _obs_vm_name: >-
+      odv-monitoring-{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['0123456789abcdef']) }}
+
+- name: Create a test VM and check its metrics
+  block:
+    - name: Read the source template for resource tracking
+      become: true
+      become_user: oneadmin
+      ansible.builtin.command:
+        argv: [onetemplate, show, "{{ observability_vm.template_id | string }}", --json]
+      register: _obs_source
+      changed_when: false
+
+    - name: Register the source template as reused (never delete it)
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: template
+        manifest_id: "{{ observability_vm.template_id }}"
+        manifest_name: "{{ (_obs_source.stdout | from_json).VMTEMPLATE.NAME }}"
+        manifest_role: observability-vm
+        manifest_disposition: reused
+
+    - name: Register temporary VM before creation can partially fail
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: vm
+        manifest_name: "{{ _obs_vm_name }}"
+        manifest_role: observability-vm
+
+    - name: Instantiate a temporary VM from the supplied template
+      become: true
+      become_user: oneadmin
+      ansible.builtin.command:
+        argv: [onetemplate, instantiate, "{{ observability_vm.template_id | string }}", --name, "{{ _obs_vm_name }}"]
+      register: _obs_vm_create
+
+    - name: Capture created VM ID
+      ansible.builtin.set_fact:
+        _obs_vm_id: "{{ _obs_vm_create.stdout | regex_search('VM ID: ([0-9]+)', '\\1') | first }}"
+
+    - name: Wait for RUNNING and VM metrics with matching labels
+      observability_probe:
+        phase: vm
+        config: "{{ odv_observability_config | combine({'vm_id': _obs_vm_id}) }}"
+        auth: "{{ observability_auth | d({}) }}"
+      register: _obs_vm_probe
+      until: _obs_vm_probe.results is defined and _obs_vm_probe.results | length == 1 and _obs_vm_probe.results[0].value == 'ok'
+      retries: "{{ observability_vm.retries | d(observability_vm_defaults.retries) }}"
+      delay: "{{ observability_vm.delay | d(observability_vm_defaults.delay) }}"
+      changed_when: false
+
+    - name: Record VM metrics result
+      ansible.builtin.include_tasks: record.yml
+      loop: "{{ _obs_vm_probe.results }}"
+      loop_control:
+        loop_var: _obs_result
+
+  rescue:
+    - name: Show VM metrics failure details
+      ansible.builtin.debug:
+        msg: "{{ (_obs_vm_probe | d({})).results | d('VM creation or probe execution failed; see task output.') }}"
+
+    - name: Record failed VM metrics scenario
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ inventory_hostname }} / VM metrics present"
+        result_value: failed
+        result_comment: >-
+          VM {{ _obs_vm_id | default('unknown') }}:
+          {{ ((_obs_vm_probe | d({})).results | d([{'comment': 'VM creation or probe execution failed; see task output.'}]))[0].comment }}
+
+  always:
+    - name: Remove the monitoring VM and verify cleanup
+      when:
+        - _obs_vm_create is defined
+        - not (_obs_vm_create.skipped | d(false))
+      vars:
+        pool: "{{ (_obs_vm_pool.stdout | from_json).VM_POOL.VM | d([], true) }}"
+        # onevm returns a mapping for a single VM; state 6 is DONE.
+        matching_vms: >-
+          {{ ([pool] if pool is mapping else pool)
+             | selectattr('NAME', 'equalto', _obs_vm_name)
+             | rejectattr('STATE', 'in', ['6', 6]) | list }}
+      block:
+        - name: List VMs to resolve the temporary name
+          become: true
+          become_user: oneadmin
+          ansible.builtin.command:
+            argv: [onevm, list, --json]
+          register: _obs_vm_pool
+          changed_when: false
+
+        - name: Terminate the temporary VM by resolved ID
+          become: true
+          become_user: oneadmin
+          ansible.builtin.command:
+            argv: [onevm, terminate, --hard, "{{ item.ID | string }}"]
+          loop: "{{ matching_vms }}"
+          register: _obs_cleanup_terminate
+          failed_when: false
+
+        - name: Recover-delete when termination was rejected
+          become: true
+          become_user: oneadmin
+          ansible.builtin.command:
+            argv: [onevm, recover, --delete, "{{ item.item.ID | string }}"]
+          loop: "{{ _obs_cleanup_terminate.results | d([]) }}"
+          when: item.rc | d(1) != 0
+          failed_when: false
+
+        - name: Wait until the temporary VM is absent or DONE
+          become: true
+          become_user: oneadmin
+          ansible.builtin.command:
+            argv: [onevm, list, --json]
+          register: _obs_vm_pool
+          changed_when: false
+          until: _obs_vm_pool.rc == 0 and matching_vms | length == 0
+          retries: "{{ observability_vm_defaults.cleanup_retries }}"
+          delay: "{{ observability_vm_defaults.cleanup_delay }}"
+
+      rescue:
+        - name: Record unresolved VM cleanup for the shared report
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_result.yml
+          vars:
+            result_key: "Observability / {{ inventory_hostname }} / VM cleanup"
+            result_value: failed
+            result_comment: "Cleanup could not verify removal of {{ _obs_vm_name }}; the final manifest sweep will retry."
+
+        - name: Record the VM as a cleanup leftover
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_leftover.yml
+          vars:
+            leftover_type: vm
+            leftover_name: "{{ _obs_vm_name }}"
+            leftover_role: observability-vm
+            leftover_detail: "Local cleanup failed or could not verify VM removal; see final sweep result."

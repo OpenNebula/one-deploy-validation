@@ -1,0 +1,33 @@
+---
+# Shared by baseline and HA probes. Callers supply config/auth/host/roles.
+- name: Initialize endpoint findings
+  ansible.builtin.set_fact:
+    _obs_endpoint_results: []
+
+- name: Check monitoring HTTP endpoints
+  ansible.builtin.include_tasks: endpoints/check.yml
+  loop:
+    - name: Prometheus readiness
+      service: prometheus
+      role: frontend
+      paths: [/-/ready, /-/healthy]
+      check: status
+    - name: Alertmanager readiness
+      service: alertmanager
+      role: frontend
+      paths: [/-/ready]
+      check: status
+    - name: Alertmanager loaded configuration
+      service: alertmanager
+      role: frontend
+      paths: [/api/v2/status]
+      check: config
+    - name: Grafana health
+      service: grafana
+      role: grafana
+      paths: [/api/health]
+      check: database
+  loop_control:
+    loop_var: _obs_endpoint
+    label: "{{ _obs_endpoint.name }}"
+  when: _obs_endpoint.role in _obs_endpoint_roles

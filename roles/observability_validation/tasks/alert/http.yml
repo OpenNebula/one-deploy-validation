@@ -1,0 +1,32 @@
+---
+- name: "{{ _obs_alert_check }} on {{ _obs_alert_peer }}"
+  ansible.builtin.uri:
+    url: "{{ _obs_alert_cfg[_obs_alert_service ~ '_url'] | regex_replace('/$', '') }}{{ _obs_alert_path }}"
+    return_content: true
+    follow_redirects: none
+    use_netrc: false
+    use_proxy: false
+    validate_certs: "{{ _obs_alert_cfg.validate_certs }}"
+    timeout: "{{ _obs_alert_cfg.timeout }}"
+    headers: "{{ {'Authorization': 'Bearer ' ~ _obs_alert_auth.token} if _obs_alert_auth.token | d('') else {} }}"
+    url_username: "{{ _obs_alert_auth.username | d(omit) if not _obs_alert_auth.token | d('') else omit }}"
+    url_password: "{{ _obs_alert_auth.password | d(omit) if not _obs_alert_auth.token | d('') else omit }}"
+    force_basic_auth: "{{ not _obs_alert_auth.token | d('') and _obs_alert_auth.username | d('') | length > 0 }}"
+  delegate_to: "{{ _obs_alert_peer }}"
+  register: _obs_alert_http
+  until: _obs_alert_valid
+  failed_when: not _obs_alert_valid
+  retries: "{{ (_obs_alert_cfg.wait_timeout | int / _obs_alert_cfg.poll_interval | int) | round(0, 'ceil') | int }}"
+  delay: "{{ _obs_alert_cfg.poll_interval }}"
+  vars:
+    _obs_alert_cfg: "{{ _obs_alert_states[_obs_alert_peer].cfg }}"
+    _obs_alert_auth: "{{ (hostvars[_obs_alert_peer].observability_auth | d(observability_auth))[_obs_alert_service] | d({}) }}"
+    _obs_alert_json: "{{ _obs_alert_http.json | d({}) }}"
+    _obs_alert_valid: "{{ _obs_alert_http.status | d(0) == 200 and _obs_expected_response | bool }}"
+  changed_when: false
+  no_log: true
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_http }}"

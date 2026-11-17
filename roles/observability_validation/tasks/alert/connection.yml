@@ -1,0 +1,7 @@
+---
+- name: Require the delegated operation to complete
+  ansible.builtin.assert:
+    that:
+      - not (_obs_result.unreachable | d(false))
+      - _obs_result.results | d([]) | selectattr('unreachable', 'defined') | selectattr('unreachable') | list | length == 0
+    fail_msg: "Frontend connection failed; preserve recovery files and continue cleanup on reachable peers."

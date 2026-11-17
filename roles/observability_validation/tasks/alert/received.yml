@@ -1,0 +1,25 @@
+---
+- name: Poll receivers until this source is confirmed
+  when: not _obs_alert_delivered
+  block:
+    - name: Read webhook evidence from every Alertmanager receiver
+      ansible.builtin.slurp:
+        src: "{{ _obs_alert_states[item].directory }}/receiver.json"
+      delegate_to: "{{ item }}"
+      loop: "{{ _obs_alert_peers }}"
+      register: _obs_alert_evidence
+      ignore_unreachable: true
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_evidence }}"
+
+    - name: Match receiver evidence to the current source
+      ansible.builtin.set_fact:
+        _obs_alert_delivered: >-
+          {{ _obs_alert_source in (_obs_alert_evidence.results | map(attribute='content') | map('b64decode')
+              | map('from_json') | map(attribute='sources') | flatten) }}
+
+    - name: Wait before checking webhook evidence again
+      ansible.builtin.pause:
+        seconds: "{{ _obs_alert_states[_obs_alert_source].cfg.poll_interval }}"

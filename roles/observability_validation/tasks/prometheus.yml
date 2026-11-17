@@ -1,0 +1,58 @@
+---
+- name: Record hosts missing a local observability probe
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / {{ obs_host }} probe coverage"
+    result_value: failed
+    result_comment: "Expected host was not successfully probed; check SSH failures or --limit."
+  loop: "{{ (_obs_frontend_hosts + _obs_node_hosts + _obs_grafana_group_hosts) | unique }}"
+  loop_control:
+    loop_var: obs_host
+  when: (hostvars[obs_host].odv_observability_local | d({})).results is not defined
+
+- name: Collect expected targets from all hosts, including failed exporters
+  ansible.builtin.set_fact:
+    odv_observability_targets: >-
+      {{ groups.all | map('extract', hostvars) | selectattr('odv_observability_local.expected_targets', 'defined')
+         | map(attribute='odv_observability_local.expected_targets') | flatten(levels=1) }}
+    odv_observability_frontends: []
+
+- name: Collect frontend aliases for Prometheus and HA checks
+  ansible.builtin.set_fact:
+    odv_observability_frontends: "{{ odv_observability_frontends + [frontend] }}"
+  loop: "{{ _obs_frontend_hosts }}"
+  vars:
+    frontend:
+      host: "{{ item }}"
+      aliases: "{{ hostvars[item].odv_observability_local.aliases | d([item, hostvars[item].ansible_host | d(item)]) }}"
+
+- name: Validate stored metrics, scrape coverage and rules from each Prometheus server
+  observability_probe:
+    phase: prometheus
+    config: >-
+      {{ odv_observability_config | combine({'expected_targets': odv_observability_targets,
+                                            'frontend_hosts': odv_observability_frontends}) }}
+    auth: "{{ observability_auth | d({}) }}"
+  register: odv_observability_prometheus
+  failed_when: false
+  ignore_unreachable: true
+  changed_when: false
+
+- name: Record Prometheus probe transport failure
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ inventory_hostname }} / Prometheus probe execution"
+    result_value: failed
+    result_comment: "Prometheus probe could not execute on frontend."
+  when: odv_observability_prometheus.results is not defined
+
+- name: Record Prometheus findings
+  ansible.builtin.include_tasks: record.yml
+  loop: "{{ odv_observability_prometheus.results | d([]) }}"
+  loop_control:
+    loop_var: _obs_result
+    label: "{{ _obs_result.key }}"

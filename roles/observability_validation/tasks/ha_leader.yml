@@ -1,0 +1,270 @@
+---
+- name: Initialize monitoring leader failover scenario
+  ansible.builtin.set_fact:
+    _obs_ha: "{{ observability_ha_defaults | combine({'vip': one_vip | d('')}) | combine(observability_ha | d({})) }}"
+    _obs_ha_hosts: "{{ _obs_frontend_hosts }}"
+    _obs_ha_grafana_hosts: "{{ _obs_grafana_group_hosts }}"
+    _obs_ha_baselines: {}
+    _obs_ha_mutated: false
+    _obs_ha_abort: false
+    _obs_ha_original: ""
+
+- name: Validate leader failover and recover original frontend
+  block:
+    - name: Require complete HA inventory and a VIP
+      ansible.builtin.assert:
+        that:
+          - _obs_ha_hosts | length >= 3
+          - _obs_ha.vip | length > 0
+          - _obs_ha_hosts | difference(ansible_play_hosts_all) | length == 0
+          - _obs_ha.grafana_vip in ['auto', true, false]
+        fail_msg: "Leader failover needs all frontend hosts (at least 3 for quorum), a VIP, and grafana_vip auto/true/false."
+
+    - name: Require baseline local probes on all frontend and node hosts
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].odv_observability_local.results is defined
+          - hostvars[item].odv_observability_local.expected_targets is defined
+          - hostvars[item].odv_observability_local.results | rejectattr('value', 'equalto', 'ok') | list | length == 0
+      loop: "{{ (_obs_ha_hosts + _obs_node_hosts) | unique }}"
+
+    - name: Resolve service names and expected topology
+      ansible.builtin.set_fact:
+        _obs_ha_units: "{{ [_obs_ha.prometheus_service, _obs_ha.alertmanager_service, _obs_ha.oned_service] }}"
+        _obs_ha_restore_units: "{{ [_obs_ha.oned_service, _obs_ha.prometheus_service, _obs_ha.alertmanager_service] }}"
+        _obs_ha_targets: "{{ odv_observability_targets }}"
+        _obs_ha_frontends: "{{ odv_observability_frontends }}"
+        _obs_ha_check_grafana: >-
+          {{ (_obs_ha_hosts | difference(_obs_ha_grafana_hosts) | length == 0)
+             if _obs_ha.grafana_vip == 'auto' else _obs_ha.grafana_vip | bool }}
+
+    - name: Require Grafana on every possible leader for VIP checks
+      ansible.builtin.assert:
+        that: not _obs_ha_check_grafana or _obs_ha_hosts | difference(_obs_ha_grafana_hosts) | length == 0
+
+    - name: Require running units before making any changes
+      ansible.builtin.include_tasks: ha/units.yml
+      loop: "{{ _obs_ha_hosts }}"
+      loop_control:
+        loop_var: _obs_ha_service_host
+      vars:
+        _obs_ha_check_units: "{{ _obs_ha_units }}"
+        _obs_ha_unit_state: active
+
+    - name: Discover initial leader
+      ansible.builtin.include_tasks: ha/identity.yml
+      vars:
+        _obs_ha_identity_host: "{{ _obs_ha_hosts | first }}"
+        _obs_ha_required_active: "{{ _obs_ha_hosts }}"
+
+    - name: Save original leader and a surviving witness
+      ansible.builtin.set_fact:
+        _obs_ha_original: "{{ _obs_elected_frontend }}"
+        _obs_ha_witness: "{{ _obs_ha_hosts | difference([_obs_elected_frontend]) | first }}"
+        _obs_ha_active_frontends: "{{ _obs_ha_frontends }}"
+
+    - name: Baseline Prometheus and Alertmanager on each frontend
+      ansible.builtin.include_tasks: ha/probe.yml
+      loop: "{{ _obs_ha_hosts }}"
+      loop_control:
+        loop_var: _obs_ha_peer
+      vars:
+        _obs_ha_mode: ha_monitoring
+        _obs_ha_capture: true
+
+    - name: Baseline monitoring through VIP
+      ansible.builtin.include_tasks: ha/probe.yml
+      vars:
+        _obs_ha_peer: "{{ _obs_ha_original }}"
+        _obs_ha_mode: ha_monitoring
+        _obs_ha_via_vip: true
+
+    - name: Baseline Grafana through VIP
+      ansible.builtin.include_tasks: ha/probe.yml
+      vars:
+        _obs_ha_peer: "{{ _obs_ha_original }}"
+        _obs_ha_mode: ha_grafana
+        _obs_ha_via_vip: true
+      when: _obs_ha_check_grafana
+
+    - name: Arm recovery before the first stop attempt
+      ansible.builtin.set_fact:
+        _obs_ha_mutated: true
+
+    - name: Stop Prometheus and Alertmanager then oned on original leader
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ _obs_ha_units }}"
+      delegate_to: "{{ _obs_ha_original }}"
+      register: _obs_ha_stopped
+      ignore_unreachable: true
+
+    - name: Confirm all three services stopped
+      ansible.builtin.include_tasks: ha/units.yml
+      vars:
+        _obs_ha_service_host: "{{ _obs_ha_original }}"
+        _obs_ha_check_units: "{{ _obs_ha_units }}"
+        _obs_ha_unit_state: inactive
+
+    # Baseline after the stop prevents cached pre-fault samples from passing.
+    - name: Use only surviving Alertmanager peers during the outage
+      ansible.builtin.set_fact:
+        _obs_ha_active_frontends: "{{ _obs_ha_frontends | rejectattr('host', 'equalto', _obs_ha_original) | list }}"
+
+    - name: Discover a different leader from surviving frontend
+      ansible.builtin.include_tasks: ha/identity.yml
+      vars:
+        _obs_ha_identity_host: "{{ _obs_ha_witness }}"
+        _obs_ha_excluded_leader: "{{ _obs_ha_original }}"
+        _obs_ha_required_active: "{{ _obs_ha_hosts | difference([_obs_ha_original]) }}"
+
+    - name: Save new leader
+      ansible.builtin.set_fact:
+        _obs_ha_new: "{{ _obs_elected_frontend }}"
+
+    - name: Capture outage metric timestamps on all survivors
+      ansible.builtin.include_tasks: ha/probe.yml
+      loop: "{{ _obs_ha_hosts | difference([_obs_ha_original]) }}"
+      loop_control:
+        loop_var: _obs_ha_peer
+      vars:
+        _obs_ha_mode: ha_monitoring
+        _obs_ha_capture: true
+
+    - name: Confirm metric progression on all survivors
+      ansible.builtin.include_tasks: ha/probe.yml
+      loop: "{{ _obs_ha_hosts | difference([_obs_ha_original]) }}"
+      loop_control:
+        loop_var: _obs_ha_peer
+      vars:
+        _obs_ha_mode: ha_monitoring
+        _obs_ha_progress: true
+
+    - name: Verify monitoring and fresh metrics through moved VIP
+      ansible.builtin.include_tasks: ha/probe.yml
+      vars:
+        _obs_ha_peer: "{{ _obs_ha_new }}"
+        _obs_ha_mode: ha_monitoring
+        _obs_ha_via_vip: true
+        _obs_ha_progress: true
+
+    - name: Verify Grafana through moved VIP with new owner's credentials
+      ansible.builtin.include_tasks: ha/probe.yml
+      vars:
+        _obs_ha_peer: "{{ _obs_ha_new }}"
+        _obs_ha_mode: ha_grafana
+        _obs_ha_via_vip: true
+      when: _obs_ha_check_grafana
+
+    - name: Ensure original leader services stayed stopped during verification
+      ansible.builtin.include_tasks: ha/units.yml
+      vars:
+        _obs_ha_service_host: "{{ _obs_ha_original }}"
+        _obs_ha_check_units: "{{ _obs_ha_units }}"
+        _obs_ha_unit_state: inactive
+
+    - name: Record successful monitoring failover
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_ha_original }} / Prometheus and Alertmanager leader failover"
+        result_value: ok
+        result_comment: "Leader {{ _obs_ha_original }} → {{ _obs_ha_new }}; VIP {{ _obs_ha.vip }}; Grafana via VIP={{ _obs_ha_check_grafana }}."
+
+  rescue:
+    - name: Stop further fault injection after failure
+      ansible.builtin.set_fact:
+        _obs_ha_abort: true
+
+    - name: Record monitoring failover failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_ha_original | default(inventory_hostname, true) }} / Prometheus and Alertmanager leader failover"
+        result_value: failed
+        result_comment: "Failed stage: {{ ansible_failed_task.name | d('HA preflight or probe') }}. See task output for probe details."
+
+  always:
+    - name: Restore original frontend when any stop was attempted
+      when: _obs_ha_mutated
+      block:
+        - name: Start all stopped services even when one fails
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: started
+          loop: "{{ _obs_ha_restore_units }}"
+          delegate_to: "{{ _obs_ha_original }}"
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Verify original frontend recovery
+          block:
+            - name: Require active services on original frontend
+              ansible.builtin.include_tasks: ha/units.yml
+              vars:
+                _obs_ha_service_host: "{{ _obs_ha_original }}"
+                _obs_ha_check_units: "{{ _obs_ha_restore_units }}"
+                _obs_ha_unit_state: active
+                _obs_ha_retries: "{{ _obs_ha.recovery_retries }}"
+                _obs_ha_delay: "{{ _obs_ha.delay }}"
+
+            - name: Confirm all frontend servers returned to RAFT
+              ansible.builtin.include_tasks: ha/identity.yml
+              vars:
+                _obs_ha_identity_host: "{{ _obs_ha_witness }}"
+                _obs_ha_required_active: "{{ _obs_ha_hosts }}"
+
+            - name: Restore full peer expectations
+              ansible.builtin.set_fact:
+                _obs_ha_active_frontends: "{{ _obs_ha_frontends }}"
+
+            - name: Capture post-recovery samples on original frontend
+              ansible.builtin.include_tasks: ha/probe.yml
+              vars:
+                _obs_ha_peer: "{{ _obs_ha_original }}"
+                _obs_ha_mode: ha_monitoring
+                _obs_ha_capture: true
+                _obs_ha_retries: "{{ _obs_ha.recovery_retries }}"
+
+            - name: Verify resumed metric collection and full peer membership on all frontend
+              ansible.builtin.include_tasks: ha/probe.yml
+              loop: "{{ _obs_ha_hosts }}"
+              loop_control:
+                loop_var: _obs_ha_peer
+              vars:
+                _obs_ha_mode: ha_monitoring
+                _obs_ha_progress: true
+                _obs_ha_retries: "{{ _obs_ha.recovery_retries }}"
+
+            - name: Verify original Grafana directly after recovery
+              ansible.builtin.include_tasks: ha/probe.yml
+              vars:
+                _obs_ha_peer: "{{ _obs_ha_original }}"
+                _obs_ha_mode: ha_grafana
+              when: _obs_ha_original in _obs_ha_grafana_hosts
+
+            - name: Record monitoring recovery
+              ansible.builtin.include_role:
+                name: validation_common
+                tasks_from: record_result.yml
+              vars:
+                result_key: "Observability / {{ _obs_ha_original }} / Prometheus and Alertmanager recovery"
+                result_value: ok
+                result_comment: "Services active; RAFT membership, VIP, metrics progression and Alertmanager peers verified."
+
+          rescue:
+            - name: Prevent subsequent disruptive tests
+              ansible.builtin.set_fact:
+                _obs_ha_abort: true
+
+            - name: Record recovery failure
+              ansible.builtin.include_role:
+                name: validation_common
+                tasks_from: record_result.yml
+              vars:
+                result_key: "Observability / {{ _obs_ha_original }} / Prometheus and Alertmanager recovery"
+                result_value: failed
+                result_comment: "Recovery failed at {{ ansible_failed_task.name | d('unknown stage') }}; check services on {{ _obs_ha_original }} before retrying."

@@ -1,0 +1,94 @@
+---
+# One coordinator prepares every receiver before enabling any source rule.
+- name: Initialize the list of alert sources
+  ansible.builtin.set_fact:
+    _obs_alert_sources: []
+
+- name: Select frontends that requested an alert
+  ansible.builtin.set_fact:
+    _obs_alert_sources: "{{ _obs_alert_sources + [item] }}"
+  loop: "{{ ansible_play_hosts_all }}"
+  when: hostvars[item].observability_alert.enabled | d(false) | bool
+
+- name: Initialize alert transaction
+  ansible.builtin.set_fact:
+    _obs_alert_run: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_lowercase', 'digits']) }}"
+    _obs_alert_peers: "{{ groups[frontend_group | d('frontend')] }}"
+    _obs_alert_states: {}
+    _obs_alert_safe: true
+  when: _obs_alert_sources | length > 0
+
+- name: Validate alert delivery with the deployed Alertmanager topology
+  when: _obs_alert_sources | length > 0
+  block:
+    - name: Prepare local receivers and configuration backups on every frontend
+      ansible.builtin.include_tasks: alert/prepare.yml
+      loop: "{{ _obs_alert_peers }}"
+      loop_control:
+        loop_var: _obs_alert_peer
+
+    - name: Verify each Prometheus sends only to prepared Alertmanager endpoints
+      ansible.builtin.include_tasks: alert/discovery.yml
+      loop: "{{ _obs_alert_sources }}"
+      loop_control:
+        loop_var: _obs_alert_source
+
+    - name: Install isolated routes on every Alertmanager before firing alerts
+      ansible.builtin.include_tasks: alert/write.yml
+      vars:
+        _obs_alert_file: alertmanager
+        _obs_alert_original: "{{ _obs_alert_states[_obs_alert_peer].files.alertmanager.parsed }}"
+        _obs_test_route:
+          receiver: "ODVValidation_{{ _obs_alert_run }}"
+          matchers:
+            - 'odv_run_id="{{ _obs_alert_run }}"'
+          continue: false
+          group_by: [alertname, odv_run_id, odv_source]
+          group_wait: 0s
+          group_interval: 1s
+          repeat_interval: 1h
+        _obs_test_receiver:
+          name: "{{ _obs_test_route.receiver }}"
+          webhook_configs:
+            - url: "http://127.0.0.1:{{ _obs_alert_states[_obs_alert_peer].port }}/{{ _obs_alert_run }}"
+              send_resolved: false
+        _obs_routing_changes:
+          route:
+            routes: "{{ [_obs_test_route] + (_obs_alert_original.route.routes | d([])) }}"
+          receivers: "{{ (_obs_alert_original.receivers | d([])) + [_obs_test_receiver] }}"
+        _obs_alert_content: "{{ _obs_alert_original | combine(_obs_routing_changes, recursive=true) | to_nice_json }}"
+      loop: "{{ _obs_alert_peers }}"
+      loop_control:
+        loop_var: _obs_alert_peer
+
+    - name: Verify each Prometheus source sequentially
+      ansible.builtin.include_tasks: alert/source.yml
+      loop: "{{ _obs_alert_sources }}"
+      loop_control:
+        loop_var: _obs_alert_source
+
+  rescue:
+    - name: Record alert setup failure for every requested source
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      loop: "{{ _obs_alert_sources }}"
+      vars:
+        result_key: "Observability / {{ item }} / Alert delivery pipeline"
+        result_value: failed
+        result_comment: "Alert setup failed at {{ ansible_failed_task.name | d('unknown task') }}; no new source is started."
+
+  always:
+    - name: Restore routes and stop all temporary receivers
+      ansible.builtin.include_tasks: alert/cleanup.yml
+      loop: "{{ _obs_alert_states.keys() | list }}"
+      loop_control:
+        loop_var: _obs_alert_peer
+
+    - name: Discard configuration snapshots from coordinator facts
+      ansible.builtin.set_fact:
+        _obs_alert_states: {}
+        _obs_alert_files: {}
+        _obs_alert_originals: {}
+        _obs_alert_http: {}
+      no_log: true

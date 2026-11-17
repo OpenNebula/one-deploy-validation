@@ -1,0 +1,73 @@
+---
+# Refuse to overwrite edits made by someone else during the scenario.
+- name: Check current configuration before replacing it
+  ansible.builtin.slurp:
+    src: "{{ _obs_alert_file_settings[_obs_alert_file].path }}"
+  delegate_to: "{{ _obs_alert_peer }}"
+  register: _obs_alert_current
+  no_log: true
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_current }}"
+
+- name: Require original or transaction-owned configuration
+  ansible.builtin.assert:
+    that: >-
+      _obs_alert_current.content == original or
+      (_obs_alert_file ~ '_written' in peer and _obs_alert_current.content == previous_content_b64) or
+      (not _obs_alert_restore | d(false) and _obs_alert_current.content == _obs_alert_content | b64encode)
+    fail_msg: "Configuration changed externally on {{ _obs_alert_peer }}; backup retained."
+  vars:
+    original: "{{ _obs_alert_states[_obs_alert_peer].files[_obs_alert_file].content }}"
+    peer: "{{ _obs_alert_states[_obs_alert_peer] }}"
+    previous_content_b64: "{{ peer.get(_obs_alert_file ~ '_written', '') | b64encode }}"
+  no_log: true
+
+- name: Mark the file for unconditional restoration before writing
+  ansible.builtin.set_fact:
+    _obs_alert_states: >-
+      {{ _obs_alert_states | combine({_obs_alert_peer: {
+         _obs_alert_file ~ '_touched': true, _obs_alert_file ~ '_written': (_obs_alert_states[_obs_alert_peer].get(_obs_alert_file ~ '_written', '') if _obs_alert_restore | d(false) else _obs_alert_content)}}, recursive=true) }}
+  no_log: true
+
+- name: Validate and atomically replace configuration
+  ansible.builtin.copy:
+    content: "{{ omit if _obs_alert_restore | d(false) else _obs_alert_content }}"
+    src: "{{ (_obs_alert_states[_obs_alert_peer].directory ~ '/' ~ _obs_alert_file ~ '.original') if _obs_alert_restore | d(false) else omit }}"
+    remote_src: "{{ _obs_alert_restore | d(false) }}"
+    dest: "{{ _obs_alert_file_settings[_obs_alert_file].path }}"
+    owner: "{{ _obs_alert_states[_obs_alert_peer].stats[_obs_alert_file].uid }}"
+    group: "{{ _obs_alert_states[_obs_alert_peer].stats[_obs_alert_file].gid }}"
+    mode: "{{ _obs_alert_states[_obs_alert_peer].stats[_obs_alert_file].mode }}"
+    validate: "{{ _obs_alert_file_settings[_obs_alert_file].validate }}"
+  delegate_to: "{{ _obs_alert_peer }}"
+  no_log: true
+  ignore_unreachable: true
+  register: _obs_alert_operation
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_operation }}"
+
+- name: Reload the affected service without restarting it
+  ansible.builtin.command:
+    argv: [systemctl, kill, --kill-who=main, --signal=HUP, "{{ _obs_alert_file_settings[_obs_alert_file].service }}"]
+  delegate_to: "{{ _obs_alert_peer }}"
+  ignore_unreachable: true
+  register: _obs_alert_operation
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_operation }}"
+
+- name: Confirm test route is loaded before starting a source
+  ansible.builtin.include_tasks: alert/http.yml
+  vars:
+    _obs_alert_service: alertmanager
+    _obs_alert_path: /api/v2/status
+    _obs_alert_check: route loaded
+    _obs_expected_response: >-
+      {{ _obs_alert_json.config.original is string and _obs_alert_run in _obs_alert_json.config.original }}
+  when: _obs_alert_file == "alertmanager" and not (_obs_alert_restore | d(false))

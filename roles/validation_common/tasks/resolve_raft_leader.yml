@@ -1,0 +1,167 @@
+---
+# Resolve the current OpenNebula RAFT leader.
+#
+# Intended to run on localhost (Ansible controller).
+# Queries all inventory frontends, tolerating unreachable members.
+#
+# Output:
+#   odv_raft_leader: inventory hostname of current leader
+#   odv_raft_leader_id: OpenNebula SERVER_ID
+#   odv_raft_reachable_frontends: reachable frontend list
+#
+# Fail closed if no leader, inconsistent leader views, or no unique
+# matching inventory frontend is found.
+
+- name: Initialize RAFT leader discovery
+  ansible.builtin.set_fact:
+    _odv_raft_leader_claims: []
+    _odv_raft_zone_views: 0
+    odv_raft_leader: ''
+    odv_raft_leader_id: ''
+
+- name: Query zone state through each configured frontend
+  ansible.builtin.command:
+    argv:
+      - sudo
+      - -n
+      - -iu
+      - oneadmin
+      - onezone
+      - show
+      - "{{ odv_raft_zone_id | default(0) | string }}"
+      - -j
+  connection: ssh
+  remote_user: "{{ odv_raft_ssh_user | default('root') }}"
+  become: false
+  vars:
+    ansible_connection: ssh
+    ansible_user: "{{ odv_raft_ssh_user | default('root') }}"
+    ansible_become: false
+  delegate_to: "{{ item }}"
+  loop: >-
+    {{
+      groups[odv_raft_frontend_group | default('frontend')]
+      | default([])
+      | reject('in', odv_raft_excluded_frontends | default([]))
+      | list
+    }}
+  register: _odv_raft_zone_queries
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  loop_control:
+    label: "{{ item }}"
+
+- name: Collect reachable OpenNebula frontends
+  ansible.builtin.set_fact:
+    odv_raft_reachable_frontends: >-
+      {{
+        _odv_raft_zone_queries.results
+        | selectattr('rc', 'defined')
+        | selectattr('rc', 'equalto', 0)
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Ensure an OpenNebula frontend is reachable
+  ansible.builtin.assert:
+    that:
+      - odv_raft_reachable_frontends | length > 0
+    fail_msg: >-
+      Cannot resolve RAFT leader: no configured frontend returned
+      a successful onezone query.
+
+- name: Extract leader ID from every successful zone query
+  ansible.builtin.set_fact:
+    _odv_raft_leader_claims: >-
+      {{ _odv_raft_leader_claims + _leaders }}
+    _odv_raft_zone_views: "{{ _odv_raft_zone_views | int + 1 }}"
+  vars:
+    _zone: "{{ item.stdout | from_json }}"
+    _server_raw: >-
+      {{ ((_zone.ZONE | default({})).SERVER_POOL | default({})).SERVER | default([]) }}
+    _servers: >-
+      {{ [_server_raw] if _server_raw is mapping else _server_raw }}
+    _leaders: >-
+      {%- set ids = [] -%}
+      {%- for server in _servers -%}
+        {%- if (server.STATE | default('') | string) == '3' -%}
+          {%- set _ = ids.append(server.ID | string) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ids }}
+  loop: "{{ _odv_raft_zone_queries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - item.rc is defined
+    - item.rc == 0
+    - (item.stdout | default('') | trim).startswith('{')
+
+- name: Verify a single consistent RAFT leader
+  ansible.builtin.assert:
+    that:
+      - (_odv_raft_zone_views | int) == (odv_raft_reachable_frontends | length)
+      - _odv_raft_leader_claims | length == odv_raft_reachable_frontends | length
+      - _odv_raft_leader_claims | unique | list | length == 1
+    fail_msg: >-
+      RAFT leader resolution failed: inconsistent or missing leader
+      information across reachable frontends.
+      Claims={{ _odv_raft_leader_claims }}
+
+- name: Store RAFT leader server ID
+  ansible.builtin.set_fact:
+    odv_raft_leader_id: "{{ _odv_raft_leader_claims | first }}"
+
+- name: Read SERVER_ID on each reachable frontend
+  ansible.builtin.shell: >-
+    awk -F= '/^[[:space:]]*SERVER_ID[[:space:]]*=/
+    {gsub(/[^0-9]/,"",$2); print $2; exit}'
+    {{ odv_raft_oned_conf | default('/etc/one/oned.conf') | quote }}
+  connection: ssh
+  remote_user: "{{ odv_raft_ssh_user | default('root') }}"
+  become: false
+  vars:
+    ansible_connection: ssh
+    ansible_user: "{{ odv_raft_ssh_user | default('root') }}"
+    ansible_become: false
+  delegate_to: "{{ item }}"
+  loop: "{{ odv_raft_reachable_frontends }}"
+  register: _odv_raft_server_id_queries
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  loop_control:
+    label: "{{ item }}"
+
+- name: Match RAFT leader ID to inventory frontend
+  ansible.builtin.set_fact:
+    _odv_raft_matching_frontends: >-
+      {{
+        _odv_raft_server_id_queries.results
+        | selectattr('stdout', 'defined')
+        | selectattr('stdout', 'equalto', odv_raft_leader_id | string)
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Verify leader maps to exactly one frontend
+  ansible.builtin.assert:
+    that:
+      - _odv_raft_matching_frontends | length == 1
+    fail_msg: >-
+      RAFT leader SERVER_ID={{ odv_raft_leader_id }} could not be
+      mapped uniquely to a reachable inventory frontend.
+      Matches={{ _odv_raft_matching_frontends }}
+
+- name: Store resolved RAFT leader
+  ansible.builtin.set_fact:
+    odv_raft_leader: "{{ _odv_raft_matching_frontends | first }}"
+
+- name: Display RAFT leader discovery results
+  ansible.builtin.debug:
+    msg:
+      leader: "{{ odv_raft_leader }}"
+      server_id: "{{ odv_raft_leader_id }}"
+      reachable_frontends: "{{ odv_raft_reachable_frontends }}"
+      configured_frontends: "{{ groups[odv_raft_frontend_group | default('frontend')] }}"

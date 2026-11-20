@@ -169,6 +169,24 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_sriov_vf_count_validation: false
 
+  # TEST CASE NAME: SR-IOV PCI Passthrough Validation
+  # DESCRIPTION: Deploys a disposable VM with an explicitly selected VF.
+  # Checks exact PCI selection, OpenNebula allocation, libvirt attachment,
+  # and VF release after cleanup. No guest access required.
+  run_sriov_pci_passthrough_validation: false
+
+  sriov_pci_passthrough:
+    template_id: ''
+    targets: []
+
+    memory_mb: 1024
+    vcpu: 1
+
+    deploy_timeout: 300
+    cleanup_timeout: 180
+    poll_interval: 5
+
+
 
   # TEST CASE NAME: Hugepage Configuration and Availability
   # DESCRIPTION: Validates deployment-defined hugepage size and quantity
@@ -177,6 +195,9 @@ validation:
   # and free pages and verifies NUMA nodes required by dpdk-socket-mem
   # have sufficient hugepage capacity.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+    discovery: auto
+    excluded_hosts: []
+    excluded_frontends: []
   run_hugepage_validation: false
 
 

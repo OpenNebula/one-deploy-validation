@@ -1,0 +1,83 @@
+---
+- name: Revalidate and exercise the selected VF
+  block:
+    - name: Restage VF scanner temporarily on target hypervisor
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../roles/sriov-pci-passthrough-validation/files/discover_vfs.py"
+        dest: /tmp/odv-sriov-live-recheck.py
+        mode: '0700'
+      delegate_to: "{{ spv_target.host }}"
+      become: true
+      become_user: root
+
+    - name: Recheck all VF owners and IOMMU groups before VM creation
+      ansible.builtin.command:
+        argv: [python3, /tmp/odv-sriov-live-recheck.py]
+        stdin: "{{ {'host': spv_target.host, 'host_id': spv_target.host_id, 'pci': hostvars[spv_target.host].odv_spv_one_pci} | to_json }}"
+      delegate_to: "{{ spv_target.host }}"
+      become: true
+      become_user: root
+      register: _spv_recheck_raw
+      changed_when: false
+
+    - name: Decode recheck result
+      ansible.builtin.set_fact:
+        _spv_recheck: "{{ _spv_recheck_raw.stdout | from_json }}"
+
+    - name: Find exact VF in latest availability snapshot
+      ansible.builtin.set_fact:
+        _spv_vf_match: "{{ _spv_recheck.vf_checks | selectattr('vf', 'equalto', spv_target.vf_full) | list }}"
+
+    - name: Refuse busy VF or changed PF association
+      ansible.builtin.assert:
+        that:
+          - (_spv_recheck.errors | length) == 0
+          - (_spv_vf_match | length) == 1
+          - _spv_vf_match[0].status in ['eligible', 'selected']
+          - _spv_vf_match[0].pf == spv_target.pf
+          - (_spv_vf_match[0].reasons | length) == 0
+        fail_msg: "VF {{ spv_target.vf_full }} is no longer safe to assign"
+
+    - name: Run proven VM deployment, exact hostdev validation and cleanup
+      ansible.builtin.include_role:
+        name: sriov-pci-passthrough-validation
+      vars:
+        sriov_pci_passthrough_targets_override:
+          - host_id: "{{ spv_target.host_id | int }}"
+            host: "{{ spv_target.host }}"
+            vf: "{{ spv_target.vf }}"
+
+    - name: Enforce exact VF success and complete VM cleanup
+      ansible.builtin.assert:
+        that:
+          - "(verification_result | default({})).get('SR-IOV PCI passthrough (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI preflight (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI VM request (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI deployment (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI PCI allocation (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI libvirt hostdev (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - "(verification_result | default({})).get('SR-IOV PCI cleanup (' ~ spv_target.host ~ ' / ' ~ spv_target.vf ~ ')') == 'ok'"
+          - (_tvbn_survivors | default([]) | length) == 0
+          - (odv_leftovers | default([]) | length) == 0
+          - "'failed' not in ((verification_result | default({})).values() | list)"
+        fail_msg: "VF test or resource cleanup failed: {{ spv_target }}"
+
+  rescue:
+    - name: Record VF failure and continue to next PF
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "SR-IOV PCI passthrough ({{ spv_target.host }} / {{ spv_target.vf }})"
+        result_value: failed
+        result_comment: >-
+          {{ (ansible_failed_result.msg | d(ansible_failed_result | string)) | truncate(500) }}
+
+  always:
+    - name: Remove temporary VF recheck scanner from hypervisor
+      ansible.builtin.file:
+        path: /tmp/odv-sriov-live-recheck.py
+        state: absent
+      delegate_to: "{{ spv_target.host }}"
+      become: true
+      become_user: root

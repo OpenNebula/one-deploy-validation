@@ -1,0 +1,88 @@
+---
+- name: Initialize SR-IOV PCI passthrough validation
+  ansible.builtin.include_tasks: initialize.yml
+
+- name: Skip when cluster discovery failed
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "SR-IOV PCI passthrough"
+    result_value: "skipped - cluster discovery failed"
+  when: odv_discovery_failed | default(false)
+
+- name: Run SR-IOV PCI passthrough validation
+  when: not (odv_discovery_failed | default(false))
+  block:
+
+    - name: Validate configuration
+      ansible.builtin.assert:
+        that:
+          - _spv_cfg.targets is sequence
+          - _spv_cfg.targets is not string
+          - _spv_cfg.targets | length == 0 or (_spv_cfg.template_id | string) is match('^[0-9]+$')
+          - (_spv_cfg.deploy_timeout | int) > 0
+          - (_spv_cfg.cleanup_timeout | int) > 0
+          - (_spv_cfg.poll_interval | int) > 0
+          - (_spv_cfg.vcpu | int) > 0
+          - (_spv_cfg.memory_mb | int) >= 128
+        fail_msg: >-
+          Configure a test template_id and a list of targets
+          containing host_id, host, and vf.
+
+    - name: Report no configured targets
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "SR-IOV PCI passthrough"
+        result_value: "skipped - no explicit targets configured"
+      when: _spv_cfg.targets | length == 0
+
+    - name: Execute SR-IOV PCI validation
+      when: _spv_cfg.targets | length > 0
+      block:
+
+        - name: Register probe file in cleanup manifest
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: manifest_add.yml
+          vars:
+            manifest_type: file
+            manifest_name: "{{ _spv_probe_path }}"
+            manifest_role: sriov-pci-passthrough-validation
+            manifest_disposition: created
+
+        - name: Copy PCI validation probe to frontend
+          ansible.builtin.copy:
+            src: pci_probe.py
+            dest: "{{ _spv_probe_path }}"
+            mode: '0700'
+          become: true
+          become_user: oneadmin
+
+        - name: Validate each configured SR-IOV VF
+          ansible.builtin.include_tasks: per_target.yml
+          loop: "{{ _spv_cfg.targets }}"
+          loop_control:
+            loop_var: spv_target
+            index_var: spv_target_idx
+            label: "{{ spv_target.host | default('?') }} / {{ spv_target.vf | default('?') }}"
+
+      always:
+
+        - name: Remove staged PCI validation probe
+          ansible.builtin.file:
+            path: "{{ _spv_probe_path }}"
+            state: absent
+          become: true
+          become_user: oneadmin
+
+  rescue:
+
+    - name: Record SR-IOV validation setup failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "SR-IOV PCI passthrough"

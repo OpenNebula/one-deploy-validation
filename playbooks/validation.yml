@@ -25,6 +25,81 @@
         - not (_gb_pre | bool)
         - hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
 
+# Load/clean the previous manifest before monitoring registers new resources.
+# Monitoring still runs before other tests restart services or fence hosts.
+- name: Observe services on frontend, node and Grafana hosts
+  hosts: "{{ frontend_group | d('frontend') }}:{{ node_group | d('node') }}:{{ grafana_group | d('grafana') }}"
+  gather_facts: false
+  tags: [observability]
+  roles:
+    - role: observability_validation
+      when: (validation | d({})).run_observability | d(false) | bool
+
+- name: Observe Prometheus data after all local probes finish
+  hosts: "{{ frontend_group | d('frontend') }}"
+  gather_facts: false
+  tags: [observability]
+  tasks:
+    - name: Run Prometheus observability checks
+      ansible.builtin.import_role:
+        name: observability_validation
+        tasks_from: prometheus.yml
+      when: (validation | d({})).run_observability | d(false) | bool
+
+- name: Create a test VM and validate its metrics
+  hosts: "{{ frontend_group | d('frontend') }}"
+  gather_facts: false
+  tags: [observability]
+  tasks:
+    - name: Run optional VM metrics scenario once
+      ansible.builtin.include_role:
+        name: observability_validation
+        tasks_from: vm.yml
+      run_once: true
+      when:
+        - (validation | d({})).run_observability | d(false) | bool
+        - (observability_vm | d({})).enabled | d(false) | bool
+        - not ansible_check_mode
+
+- name: Validate the complete alert delivery pipeline
+  hosts: "{{ frontend_group | d('frontend') }}"
+  gather_facts: false
+  tags: [observability]
+  tasks:
+    - name: Coordinate alert delivery checks for all selected frontends
+      ansible.builtin.include_role:
+        name: observability_validation
+        tasks_from: alert.yml
+      run_once: true
+      when:
+        - (validation | d({})).run_observability | d(false) | bool
+        - not ansible_check_mode
+
+- name: Validate monitoring leader failover and independent Grafana recovery
+  hosts: "{{ frontend_group | d('frontend') }}"
+  gather_facts: false
+  tags: [observability]
+  tasks:
+    - name: Run opt-in leader failover with monitoring checks
+      ansible.builtin.include_role:
+        name: observability_validation
+        tasks_from: ha_leader.yml
+      run_once: true
+      when:
+        - (validation | d({})).run_observability | d(false) | bool
+        - (observability_ha | d({})).enabled | d(false) | bool
+        - not ansible_check_mode
+
+    - name: Run opt-in Grafana stop-start on its inventory group
+      ansible.builtin.include_role:
+        name: observability_validation
+        tasks_from: ha_grafana.yml
+      run_once: true
+      when:
+        - (validation | d({})).run_observability | d(false) | bool
+        - (observability_grafana_restart | d({})).enabled | d(false) | bool
+        - not ansible_check_mode
+
 - hosts: "{{ node_group | d('node') }}"
   vars:
     _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
@@ -604,6 +679,19 @@
         - hostvars[item].verification_result is defined
 
 
+    - name: Fold observability findings from all hosts into the report
+      ansible.builtin.set_fact:
+        report_verification_result: >-
+          {{ (report_verification_result | default({}))
+             | combine(hostvars[item].verification_result | default({}) | dict2items
+                       | selectattr('key', 'match', '^Observability / ') | items2dict) }}
+        report_verification_comments: >-
+          {{ (report_verification_comments | default({}))
+             | combine(hostvars[item].verification_comments | default({}) | dict2items
+                       | selectattr('key', 'match', '^Observability / ') | items2dict) }}
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].verification_result is defined
+
     - name: Collect run manifest, sweep results and leftovers from all hosts
       # Audit-trail aggregation for the 'Execution & Cleanup Summary' section.
       # Every fact defaults to [] so hosts that registered nothing are no-ops.
@@ -614,6 +702,22 @@
       loop: "{{ groups['all'] }}"
       loop_control:
         label: "{{ item }}"
+
+    - name: Reconcile observability VM cleanup with the final sweep
+      ansible.builtin.set_fact:
+        report_leftovers: >-
+          {%- set unresolved = [] -%}
+          {%- for entry in report_leftovers -%}
+            {%- if entry.role | d('') != 'observability-vm' or entry.type != 'vm' or entry.name not in removed_vms -%}
+              {%- set _ = unresolved.append(entry) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ unresolved }}
+      vars:
+        removed_vms: >-
+          {{ report_sweep_results | d([]) | selectattr('type', 'equalto', 'vm')
+             | selectattr('action', 'equalto', 'removed') | map(attribute='name') | list }}
+      when: report_leftovers | d([]) | length > 0
 
     - name: Collect federation results from all frontend hosts
       # Build a map of frontend -> verification_result for federation checks
@@ -664,6 +768,14 @@
           {%- endfor -%}
           {{ out }}
 
+    - name: Group monitoring results for report presentation
+      ansible.builtin.set_fact:
+        monitoring_report: >-
+          {{ report_verification_result | observability_report(
+               report_verification_comments,
+               groups[frontend_group | d('frontend')] | d([]),
+               groups[node_group | d('node')] | d([])) }}
+
     - name: Render report
       template:
         src: "appendix-cloud-report.j2"
@@ -672,8 +784,10 @@
         repo_version: "{{ repo_version_cmd.stdout }}"
         date: "{{ lookup('pipe', 'date +%Y-%m-%d\\ %H:%M:%S') }}"
         report_date_only: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
-        verification_result: "{{ report_verification_result }}"
-        verification_comments: "{{ report_verification_comments }}"
+        verification_result: "{{ monitoring_report.results }}"
+        verification_comments: "{{ monitoring_report.comments }}"
+        monitoring_labels: "{{ monitoring_report.labels }}"
+        monitoring_sections: "{{ monitoring_report.sections }}"
         network_verification_results: "{{ report_network_verification_results }}"
         conn_results_matrix: "{{ hostvars[report_frontend_host].conn_results_matrix | default({}) }}"
         report_manifest: "{{ hostvars['localhost'].report_manifest | default([]) }}"

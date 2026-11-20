@@ -47,13 +47,13 @@
            'detail': '' })] }}
   loop: "{{ _sweep_plan | selectattr('action', 'in', ['keep-reused', 'keep-by-flag']) | list }}"
   loop_control: { label: "{{ item.type }}:{{ item.name }}" }
-  when: hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+  when: inventory_hostname == (hostvars['localhost'].odv_raft_leader | d(groups[frontend_group | d('frontend')][0], true))
 
 - name: Sweep OpenNebula objects (primary frontend only)
   ansible.builtin.include_tasks: sweep_one_objects.yml
   when:
     - (groups[frontend_group | d('frontend')] | d([])) | length > 0
-    - hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+    - inventory_hostname == (hostvars['localhost'].odv_raft_leader | d(groups[frontend_group | d('frontend')][0], true))
 
 - name: Sweep host-local resources (every host)
   ansible.builtin.include_tasks: sweep_local.yml

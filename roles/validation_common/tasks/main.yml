@@ -10,7 +10,7 @@
 - name: Discover OpenNebula clusters
   when:
     - (groups[frontend_group | d('frontend')] | d([])) | length > 0
-    - hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+    - inventory_hostname == (hostvars['localhost'].odv_raft_leader | d(groups[frontend_group | d('frontend')][0], true))
   block:
     - name: Initialize discovery status
       ansible.builtin.set_fact:

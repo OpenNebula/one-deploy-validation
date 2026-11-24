@@ -1,0 +1,28 @@
+---
+- name: Terminate disposable DPDK VM for {{ dvc_host.name }}
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: terminate_vm_by_name.yml
+  vars:
+    tvbn_name: >-
+      odv-dpdk-{{ _dvc_run_id }}-{{ dvc_host.id }}
+    tvbn_role: dpdk-vhost-connectivity-validation
+    tvbn_retries: 20
+    tvbn_delay: 5
+
+- name: Record VM cleanup failure
+  ansible.builtin.set_fact:
+    _dvc_cleanup_failures: >-
+      {{ _dvc_cleanup_failures + [dvc_host.name] }}
+  when: _tvbn_survivors | d([]) | length > 0
+
+- name: Remove temporary SSH test keys
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  become_user: root
+  failed_when: false
+  loop:
+    - "/tmp/odv-dpdk-key-{{ _dvc_run_id }}-{{ dvc_host.id }}"
+    - "/tmp/odv-dpdk-key-{{ _dvc_run_id }}-{{ dvc_host.id }}.pub"

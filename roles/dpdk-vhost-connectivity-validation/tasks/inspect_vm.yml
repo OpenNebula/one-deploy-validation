@@ -1,0 +1,53 @@
+---
+- name: Inspect libvirt, OVS and VLAN for {{ dvc_vm.host }}
+  ansible.builtin.script:
+    cmd: >-
+      {{ role_path }}/files/probe.py
+      --vm-id {{ dvc_vm.id }}
+      --bridge {{ _dvc_vnet.bridge }}
+      {{ ('--vlan ' ~ _dvc_vnet.vlan_id ~ ' --check-vlan')
+         if ((_dvc_cfg.check_vlan_config | bool)
+             and (_dvc_vnet.vlan_id | length > 0))
+         else '' }}
+    executable: /usr/bin/python3
+  delegate_to: "{{ dvc_vm.host }}"
+  become: true
+  become_user: root
+  register: _dvc_runtime_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse runtime inspection
+  ansible.builtin.set_fact:
+    _dvc_runtime: >-
+      {{
+        (_dvc_runtime_raw.stdout | from_json)
+        if ((_dvc_runtime_raw.stdout | d('') | trim).startswith('{'))
+        else {
+          'status': 'failed',
+          'failures': [_dvc_runtime_raw.stderr | d('invalid probe output')]
+        }
+      }}
+
+- name: Record runtime inspection result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "DPDK/vhost-user runtime {{ dvc_vm.host }}"
+    result_value: >-
+      {{
+        'ok'
+        if (_dvc_runtime_raw.rc | d(1)) == 0
+           and _dvc_runtime.status == 'ok'
+        else 'failed'
+      }}
+    result_comment: "{{ _dvc_runtime }}"
+
+- name: Remember failed runtime inspections
+  ansible.builtin.set_fact:
+    _dvc_runtime_failures: >-
+      {{ _dvc_runtime_failures + [dvc_vm.host] }}
+  when: >-
+    (_dvc_runtime_raw.rc | d(1)) != 0
+    or _dvc_runtime.status != 'ok'

@@ -381,6 +381,15 @@
   tags: [sriov_pci_passthrough]
   when: hostvars['localhost'].odv_sriov_auto_enabled | d(false) | bool
 
+# Optional OVS-DPDK vhost-user connectivity validation.
+- ansible.builtin.import_playbook: dpdk-vhost-connectivity.yml
+  tags: [dpdk_vhost_connectivity]
+  when: >-
+    (odv_dpdk_enable | d(false) | bool)
+    or
+    ((validation | d({})).run_dpdk_vhost_connectivity_validation
+     | d(false) | bool)
+
 # Final cleanup sweep — always runs, regardless of test flags or failures.
 # Deletes everything the run created (per the manifest + name conventions)
 # and records removed/kept/leftover rows for the report.

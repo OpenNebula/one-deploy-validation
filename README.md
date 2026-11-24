@@ -33,6 +33,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | Vhost-user directories, sockets and ACLs | [docs/vhost-user-validation](./docs/vhost-user-validation.md) | `validation.run_vhost_user_validation` | off | `vhost_user_validation` |
 | VM vNIC NUMA locality (vhost-user / OVS-DPDK / SR-IOV) | [docs/vm-vnic-numa-validation](./docs/vm-vnic-numa-validation.md) | `validation.run_vm_vnic_numa_validation` | off | `vm_vnic_numa_validation` |
 | OneFlow smoke test (service lifecycle) | [docs/oneflow_validation](./docs/oneflow_validation.md) | `validation.run_one_flow` | on | `one_flow` |
+| DPDK/vhost-user cross-host connectivity | [docs/dpdk-vhost-connectivity-validation](./docs/dpdk-vhost-connectivity-validation.md) | `validation.run_dpdk_vhost_connectivity_validation` | off | `dpdk_vhost_connectivity` |
 | Connectivity matrix (VM-to-VM across vNets) | [docs/conn_matrix](./docs/conn_matrix.md) | `validation.run_conn_matrix` | off | `conn_matrix` |
 | VM lifecycle (per-host power, reboot, console, migration) | [docs/vm_lifecycle](./docs/vm_lifecycle.md) | `validation.run_vm_lifecycle` | off | `vm_lifecycle` |
 | LDAP authentication | [docs/ldap_auth](./docs/ldap_auth.md) | `validation.run_ldap_auth` | off | `ldap_auth` |

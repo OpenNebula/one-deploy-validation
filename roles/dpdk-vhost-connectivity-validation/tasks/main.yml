@@ -1,0 +1,161 @@
+---
+- name: Initialize DPDK vhost-user connectivity validation
+  ansible.builtin.set_fact:
+    _dvc_cfg: >-
+      {{
+        (
+          dpdk_vhost_connectivity_defaults
+          | combine(
+              (validation | d({})).dpdk_vhost_connectivity | d({}),
+              recursive=true
+            )
+        )
+        | combine(odv_dpdk_site | d({}), recursive=true)
+      }}
+    _dvc_run_id: >-
+      {{ lookup('pipe', 'date +%s') }}-{{ lookup('password', '/dev/null length=8 chars=ascii_lowercase,digits') }}
+    _dvc_plan: {}
+    _dvc_ready_vnets: []
+
+- name: Validate DPDK connectivity configuration
+  ansible.builtin.assert:
+    that:
+      - (_dvc_cfg.hosts | length) in [0, 2]
+      - (_dvc_cfg.ping_count | int) > 0
+      - (_dvc_cfg.vcpu | int) > 0
+      - (_dvc_cfg.memory_mb | int) >= 1024
+    fail_msg: >-
+      DPDK connectivity requires zero or exactly two selected hosts,
+      positive ping/vCPU values, and at least 1024 MiB RAM.
+
+- name: Discover DPDK connectivity targets
+  block:
+    - name: Stage read-only OpenNebula planner
+      ansible.builtin.copy:
+        src: plan.py
+        dest: "/tmp/odv-dpdk-plan-{{ _dvc_run_id }}.py"
+        mode: '0755'
+
+    - name: Discover online hosts, vNETs and image datastore
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "/tmp/odv-dpdk-plan-{{ _dvc_run_id }}.py"
+        stdin: >-
+          {{
+            {
+              'inventory_hosts': groups[node_group | d('node')] | d([]),
+              'hosts': _dvc_cfg.hosts,
+              'excluded_hosts': _dvc_cfg.excluded_hosts,
+              'vnet_name': _dvc_cfg.vnet_name
+            } | to_json
+          }}
+      become: true
+      become_user: oneadmin
+      register: _dvc_plan_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Parse discovery result
+      ansible.builtin.set_fact:
+        _dvc_plan: "{{ _dvc_plan_raw.stdout | from_json }}"
+      when: (_dvc_plan_raw.stdout | d('') | trim).startswith('{')
+
+    - name: Reject failed planner execution
+      ansible.builtin.assert:
+        that:
+          - _dvc_plan_raw.rc == 0
+          - (_dvc_plan.status | d('failed')) != 'failed'
+        fail_msg: >-
+          DPDK discovery failed:
+          {{ _dvc_plan.reason | d(_dvc_plan_raw.stderr | d('invalid output')) }}
+
+    - name: Record skipped validation
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: 'DPDK/vhost-user connectivity'
+        result_value: "skipped — {{ _dvc_plan.reason }}"
+      when: _dvc_plan.status == 'skipped'
+
+    - name: Check candidate OVS-DPDK bridges on selected hosts
+      ansible.builtin.command:
+        argv:
+          - ovs-vsctl
+          - get
+          - Bridge
+          - "{{ item.0.bridge }}"
+          - datapath_type
+      delegate_to: "{{ item.1.name }}"
+      become: true
+      become_user: root
+      register: _dvc_bridge_checks
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+      loop: >-
+        {{
+          (_dvc_plan.vnets | d([]))
+          | product(_dvc_plan.hosts | d([]))
+          | list
+        }}
+      loop_control:
+        label: "{{ item.1.name }} -> {{ item.0.bridge }}"
+      when: _dvc_plan.status == 'ok'
+
+    - name: Select first vNET with netdev bridge on both hosts
+      ansible.builtin.set_fact:
+        _dvc_ready_vnets: >-
+          {%- set eligible = [] -%}
+          {%- for network in _dvc_plan.vnets -%}
+            {%- set state = namespace(success=0) -%}
+            {%- for check in _dvc_bridge_checks.results -%}
+              {%- if (check.item | d([]) | length) == 2
+                     and check.item[0].id == network.id
+                     and (check.rc | d(1) | int) == 0
+                     and (check.stdout | d('') | trim | replace('"', '')) == 'netdev' -%}
+                {%- set state.success = state.success + 1 -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if state.success == (_dvc_plan.hosts | length) -%}
+              {%- set _ = eligible.append(network) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ eligible }}
+      when: _dvc_plan.status == 'ok'
+
+    - name: Skip if no common DPDK bridge exists
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: 'DPDK/vhost-user connectivity'
+        result_value: >-
+          skipped — no eligible DPDK vNET bridge is netdev
+          on both selected hosts
+      when:
+        - _dvc_plan.status == 'ok'
+        - _dvc_ready_vnets | length == 0
+
+    - name: Test connectivity on selected existing DPDK vNET
+      ansible.builtin.include_tasks: execute.yml
+      vars:
+        _dvc_vnet: "{{ _dvc_ready_vnets | first | default({}) }}"
+      when:
+        - _dvc_plan.status == 'ok'
+        - _dvc_ready_vnets | length > 0
+
+  rescue:
+    - name: Record DPDK connectivity setup failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: 'DPDK/vhost-user connectivity'
+
+  always:
+    - name: Remove temporary discovery script
+      ansible.builtin.file:
+        path: "/tmp/odv-dpdk-plan-{{ _dvc_run_id }}.py"
+        state: absent

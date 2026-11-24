@@ -318,6 +318,29 @@ validation:
     vm_running_delay: 5
 
 
+  # TEST CASE NAME: DPDK/vhost-user VM Connectivity
+  # Creates two disposable VMs on an existing OVS-DPDK vNET.
+  # Verifies actual vhost-user interfaces, performs bidirectional ICMP,
+  # and reads VLAN configuration without modifying it.
+  run_dpdk_vhost_connectivity_validation: false
+
+  dpdk_vhost_connectivity:
+    hosts: []
+    excluded_hosts: []
+    excluded_frontends: []
+    vnet_name: ''
+    market_name: 'Alpine Linux 3.21'
+    vcpu: 1
+    memory_mb: 2048
+    ping_count: 10
+    check_vlan_config: true
+    image_ready_retries: 60
+    image_ready_delay: 10
+    vm_running_retries: 30
+    vm_running_delay: 5
+    ssh_retries: 12
+    ssh_delay: 5
+
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the
   # OpenNebula cloud. From each host accesses the VM (temporarily sets up local routing

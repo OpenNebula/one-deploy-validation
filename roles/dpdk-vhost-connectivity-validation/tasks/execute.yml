@@ -1,0 +1,199 @@
+---
+- name: Initialize DPDK test execution state
+  ansible.builtin.set_fact:
+    _dvc_vms: []
+    _dvc_unreachable_guests: []
+    _dvc_runtime_failures: []
+    _dvc_failed_legs: []
+    _dvc_cleanup_failures: []
+    _dvc_execution_error: ''
+    _dvc_created_template: false
+    _dvc_template_id: ''
+    _dvc_image_id: ''
+
+- name: Display selected DPDK network and hosts
+  ansible.builtin.debug:
+    msg:
+      selected_vnet: "{{ _dvc_vnet }}"
+      hosts: "{{ _dvc_plan.hosts }}"
+      raft_leader: "{{ inventory_hostname }}"
+
+- name: Run DPDK connectivity test
+  block:
+    - name: Ensure validation VM template
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: ensure_test_template.yml
+      vars:
+        ensure_app_name: "{{ _dvc_cfg.market_name }}"
+        ensure_name: "{{ _dvc_cfg.market_name }}"
+        ensure_ds_id: "{{ _dvc_plan.image_ds_id }}"
+        ensure_role: dpdk-vhost-connectivity-validation
+        ensure_apply_extra: false
+
+    - name: Remember template ownership
+      ansible.builtin.set_fact:
+        _dvc_created_template: "{{ _odv_exported | bool }}"
+        _dvc_template_id: "{{ _export_template_id | string }}"
+        _dvc_image_id: "{{ _export_image_id | string }}"
+
+    - name: Wait for VM image readiness
+      ansible.builtin.command:
+        argv:
+          - oneimage
+          - list
+          - --f
+          - "ID={{ _dvc_image_id }}"
+          - -l
+          - STAT
+          - --no-header
+      become: true
+      become_user: oneadmin
+      register: _dvc_image_state
+      changed_when: false
+      until: >-
+        (_dvc_image_state.stdout | trim) in ['rdy', 'used']
+      retries: "{{ _dvc_cfg.image_ready_retries | int }}"
+      delay: "{{ _dvc_cfg.image_ready_delay | int }}"
+
+    - name: Deploy one VM on each selected hypervisor
+      ansible.builtin.include_tasks: create_vm.yml
+      loop: "{{ _dvc_plan.hosts }}"
+      loop_control:
+        loop_var: dvc_host
+        label: "{{ dvc_host.name }}"
+
+    - name: Require two VMs on distinct hosts
+      ansible.builtin.assert:
+        that:
+          - _dvc_vms | length == 2
+          - (_dvc_vms | map(attribute='host') | unique | list | length) == 2
+
+    - name: Verify libvirt and OVS vhost-user datapaths
+      ansible.builtin.include_tasks: inspect_vm.yml
+      loop: "{{ _dvc_vms }}"
+      loop_control:
+        loop_var: dvc_vm
+        label: "{{ dvc_vm.host }}"
+
+    - name: Refuse traffic test with invalid DPDK datapath
+      ansible.builtin.assert:
+        that:
+          - _dvc_runtime_failures | length == 0
+        fail_msg: >-
+          Runtime DPDK verification failed:
+          {{ _dvc_runtime_failures | join(', ') }}
+
+    - name: Verify both guests are reachable from RAFT leader
+      ansible.builtin.include_tasks: frontend_reachability.yml
+      loop: "{{ _dvc_vms }}"
+      loop_control:
+        loop_var: dvc_vm
+        label: "{{ dvc_vm.host }} ({{ dvc_vm.ip }})"
+
+    - name: Execute ICMP in both directions
+      ansible.builtin.include_tasks: traffic.yml
+      loop:
+        - "{{ [_dvc_vms[0], _dvc_vms[1]] }}"
+        - "{{ [_dvc_vms[1], _dvc_vms[0]] }}"
+      loop_control:
+        loop_var: dvc_leg
+        label: >-
+          {{ dvc_leg[0].host }} -> {{ dvc_leg[1].host }}
+      when: _dvc_unreachable_guests | length == 0
+
+  rescue:
+    - name: Record execution exception
+      ansible.builtin.set_fact:
+        _dvc_execution_error: >-
+          {{
+            (
+              'task=' ~ (ansible_failed_task.name | d('unknown'))
+              ~ '; rc=' ~ (ansible_failed_result.rc | d('N/A') | string)
+              ~ '; msg=' ~ (ansible_failed_result.msg | d('') | string)
+              ~ '; stdout=' ~ (ansible_failed_result.stdout | d('') | string)
+              ~ '; stderr=' ~ (ansible_failed_result.stderr | d('') | string)
+            ) | truncate(1600, true, '')
+          }}
+
+  always:
+    - name: Cleanup temporary test VMs and SSH keys
+      ansible.builtin.include_tasks: cleanup_vm.yml
+      loop: "{{ _dvc_plan.hosts }}"
+      loop_control:
+        loop_var: dvc_host
+
+    - name: Delete newly exported template
+      ansible.builtin.command:
+        argv:
+          - onetemplate
+          - delete
+          - "{{ _dvc_template_id }}"
+      become: true
+      become_user: oneadmin
+      register: _dvc_template_delete
+      changed_when: _dvc_template_delete.rc == 0
+      failed_when: false
+      when:
+        - _dvc_created_template | bool
+        - _dvc_template_id | length > 0
+
+    - name: Delete newly exported image
+      ansible.builtin.command:
+        argv:
+          - oneimage
+          - delete
+          - "{{ _dvc_image_id }}"
+      become: true
+      become_user: oneadmin
+      register: _dvc_image_delete
+      changed_when: _dvc_image_delete.rc == 0
+      failed_when: false
+      when:
+        - _dvc_created_template | bool
+        - _dvc_image_id | length > 0
+
+    - name: Track template/image cleanup failures
+      ansible.builtin.set_fact:
+        _dvc_cleanup_failures: >-
+          {{
+            _dvc_cleanup_failures
+            + ['exported template or image']
+          }}
+      when:
+        - _dvc_created_template | bool
+        - >-
+          (_dvc_template_delete.rc | d(1)) != 0
+          or (_dvc_image_delete.rc | d(1)) != 0
+
+- name: Record final DPDK connectivity result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: 'DPDK/vhost-user connectivity'
+    result_value: >-
+      {{
+        'failed'
+        if (
+          (_dvc_execution_error | length > 0)
+          or (_dvc_runtime_failures | length > 0)
+          or (_dvc_failed_legs | length > 0)
+          or (_dvc_cleanup_failures | length > 0)
+          or (_dvc_vms | length != 2)
+        )
+        else (
+          'skipped — frontend cannot reach both test VMs on TCP/22'
+          if (_dvc_unreachable_guests | length > 0)
+          else 'ok'
+        )
+      }}
+    result_comment:
+      frontend_unreachable_guests: "{{ _dvc_unreachable_guests }}"
+      selected_vnet: "{{ _dvc_vnet }}"
+      hypervisors: "{{ _dvc_plan.hosts }}"
+      vm_ids: "{{ _dvc_vms | map(attribute='id') | list }}"
+      runtime_failures: "{{ _dvc_runtime_failures }}"
+      packet_loss_failures: "{{ _dvc_failed_legs }}"
+      cleanup_failures: "{{ _dvc_cleanup_failures }}"
+      execution_error: "{{ _dvc_execution_error }}"

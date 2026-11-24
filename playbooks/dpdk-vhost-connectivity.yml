@@ -1,0 +1,40 @@
+---
+- name: Discover DPDK validation execution frontend
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [dpdk_vhost_connectivity]
+  vars:
+    odv_raft_excluded_frontends: >-
+      {{
+        (odv_dpdk_site | d({})).excluded_frontends
+        | d(
+            ((validation | d({})).dpdk_vhost_connectivity | d({}))
+            .excluded_frontends | d([])
+          )
+      }}
+  tasks:
+    - name: Resolve current RAFT leader
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: resolve_raft_leader.yml
+
+    - name: Register elected OpenNebula frontend
+      ansible.builtin.add_host:
+        name: "{{ odv_raft_leader }}"
+        groups: odv_dpdk_execution_leader
+        ansible_connection: ssh
+        ansible_user: "{{ odv_raft_ssh_user | default('root') }}"
+        ansible_become: false
+
+- name: Validate DPDK vhost-user connectivity
+  hosts: odv_dpdk_execution_leader
+  gather_facts: false
+  tags: [dpdk_vhost_connectivity]
+  roles:
+    - role: dpdk-vhost-connectivity-validation
+      when: >-
+        (odv_dpdk_enable | d(false) | bool)
+        or
+        ((validation | d({})).run_dpdk_vhost_connectivity_validation
+         | d(false) | bool)

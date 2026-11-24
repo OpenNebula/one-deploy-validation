@@ -1,0 +1,29 @@
+---
+- name: Check frontend connectivity to {{ dvc_vm.host }} test VM
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import socket,sys;
+        s=socket.create_connection((sys.argv[1],22),3);
+        s.close()
+      - "{{ dvc_vm.ip }}"
+  register: _dvc_tcp_probe
+  changed_when: false
+  failed_when: false
+  until: (_dvc_tcp_probe.rc | d(1)) == 0
+  retries: 6
+  delay: 5
+
+- name: Record unreachable guest
+  ansible.builtin.set_fact:
+    _dvc_unreachable_guests: >-
+      {{
+        _dvc_unreachable_guests + [{
+          'host': dvc_vm.host,
+          'ip': dvc_vm.ip,
+          'error': _dvc_tcp_probe.stderr | d('')
+        }]
+      }}
+  when: (_dvc_tcp_probe.rc | d(1)) != 0

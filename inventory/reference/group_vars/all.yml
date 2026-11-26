@@ -231,6 +231,24 @@ validation:
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
   run_sriov_vf_count_validation: false
 
+  # TEST CASE NAME: SR-IOV PCI Passthrough Validation
+  # DESCRIPTION: Deploys a disposable VM with an explicitly selected VF.
+  # Checks exact PCI selection, OpenNebula allocation, libvirt attachment,
+  # and VF release after cleanup. No guest access required.
+  run_sriov_pci_passthrough_validation: false
+
+  sriov_pci_passthrough:
+    template_id: ''
+    targets: []
+
+    memory_mb: 1024
+    vcpu: 1
+
+    deploy_timeout: 300
+    cleanup_timeout: 180
+    poll_interval: 5
+
+
 
   # TEST CASE NAME: Hugepage Configuration and Availability
   # DESCRIPTION: Validates deployment-defined hugepage size and quantity
@@ -239,6 +257,9 @@ validation:
   # and free pages and verifies NUMA nodes required by dpdk-socket-mem
   # have sufficient hugepage capacity.
   # OUTPUT: HTML document at /tmp/cloud_verification_report.html
+    discovery: auto
+    excluded_hosts: []
+    excluded_frontends: []
   run_hugepage_validation: false
 
 
@@ -358,6 +379,29 @@ validation:
     vm_running_retries: 30
     vm_running_delay: 5
 
+
+  # TEST CASE NAME: DPDK/vhost-user VM Connectivity
+  # Creates two disposable VMs on an existing OVS-DPDK vNET.
+  # Verifies actual vhost-user interfaces, performs bidirectional ICMP,
+  # and reads VLAN configuration without modifying it.
+  run_dpdk_vhost_connectivity_validation: false
+
+  dpdk_vhost_connectivity:
+    hosts: []
+    excluded_hosts: []
+    excluded_frontends: []
+    vnet_name: ''
+    market_name: 'Alpine Linux 3.21'
+    vcpu: 1
+    memory_mb: 2048
+    ping_count: 10
+    check_vlan_config: true
+    image_ready_retries: 60
+    image_ready_delay: 10
+    vm_running_retries: 30
+    vm_running_delay: 5
+    ssh_retries: 12
+    ssh_delay: 5
 
   # TEST CASE NAME: Connectivity Matrix
   # DESCRIPTION: Instantiates a test VM on each hypervisor hosts registered in the

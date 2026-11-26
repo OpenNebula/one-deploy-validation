@@ -1,4 +1,24 @@
 ---
+# Select RAFT leader only when automatic SR-IOV testing is enabled.
+- name: Resolve RAFT leader for automatic SR-IOV
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+  vars:
+    odv_raft_excluded_frontends: "{{ (validation | d({})).get('sriov_pci_passthrough', {}).get('excluded_frontends', []) }}"
+  tasks:
+    - name: Freeze SR-IOV auto-mode toggle
+      ansible.builtin.set_fact:
+        odv_sriov_auto_enabled: >-
+          {{ (validation.run_sriov_pci_passthrough_validation | d(false) | bool)
+             and ((validation.sriov_pci_passthrough.discovery | d('manual')) == 'auto') }}
+
+    - name: Resolve elected RAFT leader
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: resolve_raft_leader.yml
+      when: odv_sriov_auto_enabled | bool
+
 - hosts: all
   tags: [always]
   vars:
@@ -23,7 +43,7 @@
         tasks_from: preclean.yml
       when:
         - not (_gb_pre | bool)
-        - hostvars[groups[frontend_group | d('frontend')][0]]['ansible_host'] == ansible_host
+        - inventory_hostname == (hostvars['localhost'].odv_raft_leader | d(groups[frontend_group | d('frontend')][0], true))
 
 # Validate clean hypervisor host reboot and re-integration into OpenNebula.
 # Destructive (reboots a hypervisor node): runs after non-destructive tests.
@@ -254,6 +274,22 @@
         - inventory_hostname == groups[frontend_group | d('frontend')][0]
 
 
+# Validate SR-IOV PCI passthrough using disposable VMs.
+# Runs on the primary frontend; no guest access is required.
+- hosts: "{{ frontend_group | d('frontend') }}"
+  tags: [sriov_pci_passthrough]
+  gather_facts: false
+  vars:
+    _gb_pre: "{{ (gpu_benchmark_phase | d((gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
+  roles:
+    - role: sriov-pci-passthrough-validation
+      when:
+        - validation.run_sriov_pci_passthrough_validation | d(false)
+        - (validation.sriov_pci_passthrough.discovery | d('manual')) != 'auto'
+        - not (_gb_pre | bool)
+        - inventory_hostname == groups[frontend_group | d('frontend')][0]
+
+
 # Will launch OneFlow Smoke test. Runs BEFORE the core-services checks:
 # those restart oned/opennebula-flow, and on an HA zone restarting the
 # LEADER's oned destabilizes monitoring/flow-server state for minutes —
@@ -326,6 +362,20 @@
         - validation.run_federation | d(false)
         - not (_gb_pre | bool)
 
+# One automatic PCI test per eligible PF on the elected leader.
+- ansible.builtin.import_playbook: sriov-pci-auto.yml
+  tags: [sriov_pci_passthrough]
+  when: hostvars['localhost'].odv_sriov_auto_enabled | d(false) | bool
+
+# Optional OVS-DPDK vhost-user connectivity validation.
+- ansible.builtin.import_playbook: dpdk-vhost-connectivity.yml
+  tags: [dpdk_vhost_connectivity]
+  when: >-
+    (odv_dpdk_enable | d(false) | bool)
+    or
+    ((validation | d({})).run_dpdk_vhost_connectivity_validation
+     | d(false) | bool)
+
 # Final cleanup sweep — always runs, regardless of test flags or failures.
 # Deletes everything the run created (per the manifest + name conventions)
 # and records removed/kept/leftover rows for the report.
@@ -342,11 +392,11 @@
   gather_facts: false
   become: false
   vars:
-    report_name: "{{ hostvars[groups[frontend_group | d('frontend')][0]].inventory_dir | default('report', true) | basename }}"
+    report_name: "{{ hostvars[report_frontend_host].inventory_dir | default('report', true) | basename }}"
     report_html: "/tmp/cloud_verification_report_{{ report_name }}.html"
     report_pdf: "/tmp/cloud_verification_report_{{ report_name }}.pdf"
     report_css: "/tmp/print_fix_{{ report_name }}.css"
-    report_frontend_host: "{{ groups[frontend_group | d('frontend')][0] }}"
+    report_frontend_host: "{{ hostvars['localhost'].odv_raft_leader | d(groups[frontend_group | d('frontend')][0], true) }}"
     _gb_pre: "{{ (gpu_benchmark_phase | d((hostvars[report_frontend_host].gpu_benchmark | d({})).phase | d('post'), true)) == 'pre' }}"
     report_verification_result: "{{ hostvars[report_frontend_host].verification_result | default({'No verification results were found': 'N/A'}) }}"
     report_verification_comments: "{{ hostvars[report_frontend_host].verification_comments | default({}) }}"

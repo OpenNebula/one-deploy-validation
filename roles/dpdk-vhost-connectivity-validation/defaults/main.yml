@@ -1,0 +1,17 @@
+---
+dpdk_vhost_connectivity_defaults:
+  hosts: []
+  excluded_hosts: []
+  excluded_frontends: []
+  vnet_name: ''
+  market_name: 'Alpine Linux 3.21'
+  vcpu: 1
+  memory_mb: 2048
+  ping_count: 10
+  check_vlan_config: true
+  image_ready_retries: 60
+  image_ready_delay: 10
+  vm_running_retries: 30
+  vm_running_delay: 5
+  ssh_retries: 12
+  ssh_delay: 5

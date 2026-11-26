@@ -1,0 +1,21 @@
+---
+- name: Initialize SR-IOV PCI passthrough validation
+  ansible.builtin.set_fact:
+    _spv_cfg: >-
+      {{
+        (
+          sriov_pci_passthrough_defaults
+          | combine(
+              validation.sriov_pci_passthrough | default({}),
+              recursive=true
+            )
+        )
+        | combine(
+            {'targets': sriov_pci_passthrough_targets_override}
+            if sriov_pci_passthrough_targets_override is defined
+            else {},
+            recursive=true
+          )
+      }}
+    _spv_run_id: "{{ lookup('pipe', 'date +%s') }}-{{ 999999 | random }}"
+    _spv_probe_path: "/tmp/odv-sriov-pci-probe-{{ lookup('pipe', 'date +%s') }}-{{ 999999 | random }}.py"

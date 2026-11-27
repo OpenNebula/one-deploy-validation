@@ -1,0 +1,210 @@
+---
+- name: Store frontend-specific alert settings
+  ansible.builtin.set_fact:
+    _obs_alert_states: >-
+      {{ _obs_alert_states | combine({_obs_alert_peer: {'cfg': observability_alert_defaults
+         | combine({'prometheus_url': _obs_config.prometheus_url, 'alertmanager_url': _obs_config.alertmanager_url,
+                    'timeout': _obs_config.timeout, 'validate_certs': _obs_config.validate_certs})
+         | combine(hostvars[_obs_alert_peer].observability_alert | d({})),
+         'aliases': ([ _obs_alert_peer, hostvars[_obs_alert_peer].ansible_host | d(_obs_alert_peer), 'localhost', '127.0.0.1', '::1']
+                     + (hostvars[_obs_alert_peer].odv_observability_local | d({})).aliases | d([])) | unique}}) }}
+  vars:
+    _obs_config: "{{ hostvars[_obs_alert_peer].odv_observability_config }}"
+
+- name: Require direct frontend endpoints and bounded polling
+  ansible.builtin.assert:
+    that:
+      - _obs_cfg.wait_timeout | int >= 10
+      - _obs_cfg.wait_timeout | int <= 600
+      - _obs_cfg.poll_interval | int >= 1
+      - _obs_cfg.poll_interval | int <= 30
+      - _obs_cfg.prometheus_url | urlsplit('hostname') in _obs_alert_states[_obs_alert_peer].aliases
+      - _obs_cfg.alertmanager_url | urlsplit('hostname') in _obs_alert_states[_obs_alert_peer].aliases
+      - not (_obs_cfg.prometheus_url | urlsplit('username'))
+      - not (_obs_cfg.alertmanager_url | urlsplit('username'))
+  vars:
+    _obs_cfg: "{{ _obs_alert_states[_obs_alert_peer].cfg }}"
+
+# mkdir fails atomically if another run owns the lock. Do not delete foreign locks.
+- name: Acquire exclusive alert configuration lock
+  ansible.builtin.command:
+    argv: [mkdir, "{{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}.odv-lock"]
+  delegate_to: "{{ _obs_alert_peer }}"
+  ignore_unreachable: true
+  register: _obs_alert_operation
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_operation }}"
+
+- name: Track acquired lock
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine({_obs_alert_peer: {'locked': true}}, recursive=true) }}"
+
+- name: Create private transaction directory
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ _obs_alert_states[_obs_alert_peer].cfg.backup_dir }}"
+    prefix: odv-alert-
+  delegate_to: "{{ _obs_alert_peer }}"
+  register: _obs_alert_directory
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_directory }}"
+
+- name: Track transaction directory for cleanup
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine({_obs_alert_peer: {'directory': _obs_alert_directory.path}}, recursive=true) }}"
+
+- name: Inspect configuration files without following symlinks
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+  delegate_to: "{{ _obs_alert_peer }}"
+  loop:
+    - {name: prometheus, path: "{{ _obs_alert_states[_obs_alert_peer].cfg.prometheus_config }}"}
+    - {name: rules, path: "{{ _obs_alert_states[_obs_alert_peer].cfg.rules_file }}"}
+    - {name: alertmanager, path: "{{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}"}
+  register: _obs_alert_stats
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_stats }}"
+
+- name: Require existing regular configuration files
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | d(false)
+      - not item.stat.islnk | d(false)
+  loop: "{{ _obs_alert_stats.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Read original configurations
+  ansible.builtin.slurp:
+    src: "{{ item.item.path }}"
+  delegate_to: "{{ _obs_alert_peer }}"
+  loop: "{{ _obs_alert_stats.results }}"
+  register: _obs_alert_files
+  no_log: true
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_files }}"
+
+- name: Keep exact configuration snapshots and metadata
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine({_obs_alert_peer: snapshot}, recursive=true) }}"
+  loop: "{{ _obs_alert_files.results }}"
+  loop_control:
+    loop_var: file_read
+  vars:
+    filename: "{{ file_read.item.item.name }}"
+    snapshot:
+      files: "{{ {filename: contents} }}"
+      stats: "{{ {filename: file_read.item.stat} }}"
+    contents:
+      content: "{{ file_read.content }}"
+      parsed: "{{ file_read.content | b64decode | from_yaml }}"
+  no_log: true
+
+- name: Verify the test rule file is included in Prometheus configuration
+  ansible.builtin.assert:
+    that: _obs_rule_included | bool
+    fail_msg: "The configured rules_file must already be included by Prometheus on {{ _obs_alert_peer }}."
+  vars:
+    _obs_cfg: "{{ _obs_alert_states[_obs_alert_peer].cfg }}"
+    _obs_rule_included: >-
+      {%- set ns = namespace(found=false) -%}
+      {%- for pattern in _obs_alert_states[_obs_alert_peer].files.prometheus.parsed.rule_files | d([]) -%}
+      {%- set absolute = pattern if pattern.startswith('/') else (_obs_cfg.prometheus_config | dirname) ~ '/' ~ pattern -%}
+      {%- if _obs_cfg.rules_file is match('^' ~ (absolute | regex_escape | replace('\\*', '.*') | replace('\\?', '.')) ~ '$') -%}
+      {%- set ns.found = true -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.found }}
+
+- name: Save original files for manual recovery if interrupted
+  ansible.builtin.copy:
+    src: "{{ _obs_alert_states[_obs_alert_peer].cfg.rules_file if item == 'rules' else _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}"
+    remote_src: true
+    dest: "{{ _obs_alert_directory.path }}/{{ item }}.original"
+    mode: '0600'
+  delegate_to: "{{ _obs_alert_peer }}"
+  loop: [rules, alertmanager]
+  no_log: true
+  ignore_unreachable: true
+  register: _obs_alert_operation
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_operation }}"
+
+- name: Install temporary webhook receiver
+  ansible.builtin.copy:
+    src: alert_receiver.py
+    dest: "{{ _obs_alert_directory.path }}/receiver.py"
+    mode: '0700'
+  delegate_to: "{{ _obs_alert_peer }}"
+  ignore_unreachable: true
+  register: _obs_alert_operation
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_operation }}"
+
+- name: Start loopback receiver with a bounded lifetime
+  ansible.builtin.command:
+    argv:
+      - "{{ hostvars[_obs_alert_peer].ansible_python_interpreter | d('/usr/bin/python3') }}"
+      - "{{ _obs_alert_directory.path }}/receiver.py"
+      - "{{ _obs_alert_directory.path }}"
+      - "{{ _obs_alert_run }}"
+      - --lifetime
+      - "{{ 600 + 600 * 8 * (_obs_alert_peers | length) }}"
+  delegate_to: "{{ _obs_alert_peer }}"
+  async: "{{ 660 + 600 * 8 * (_obs_alert_peers | length) }}"
+  poll: 0
+  register: _obs_alert_receiver_job
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_receiver_job }}"
+
+- name: Track receiver process
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine({_obs_alert_peer: {'job': _obs_alert_receiver_job.ansible_job_id}}, recursive=true) }}"
+
+- name: Wait for receiver state file
+  ansible.builtin.stat:
+    path: "{{ _obs_alert_directory.path }}/receiver.json"
+  delegate_to: "{{ _obs_alert_peer }}"
+  register: _obs_alert_receiver_state
+  until: _obs_alert_receiver_state.stat.exists
+  retries: 10
+  delay: 1
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_receiver_state }}"
+
+- name: Read bound receiver port
+  ansible.builtin.slurp:
+    src: "{{ _obs_alert_directory.path }}/receiver.json"
+  delegate_to: "{{ _obs_alert_peer }}"
+  register: _obs_alert_receiver_state
+  ignore_unreachable: true
+
+- ansible.builtin.import_tasks: connection.yml
+  vars:
+    _obs_result: "{{ _obs_alert_receiver_state }}"
+
+- name: Store bound receiver port
+  ansible.builtin.set_fact:
+    _obs_alert_states: "{{ _obs_alert_states | combine({_obs_alert_peer: {'port': (_obs_alert_receiver_state.content | b64decode | from_json).port}}, recursive=true) }}"

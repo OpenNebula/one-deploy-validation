@@ -1,0 +1,63 @@
+---
+# Inputs: _obs_ha_peer, _obs_ha_mode; optional _obs_ha_via_vip, _obs_ha_progress, _obs_ha_capture.
+# Execute VIP probes on a surviving witness, using the endpoint owner's auth.
+- name: Prepare HA endpoint configuration
+  ansible.builtin.set_fact:
+    _obs_ha_endpoint_config: "{{ hostvars[_obs_ha_peer].odv_observability_config | combine(_vip_urls if _obs_ha_via_vip | d(false) else {}) }}"
+  vars:
+    _vip_address: "{{ '[' ~ _obs_ha.vip ~ ']' if ':' in _obs_ha.vip else _obs_ha.vip }}"
+    _vip_urls:
+      prometheus_url: "{{ _obs_ha.vip_scheme }}://{{ _vip_address }}:{{ _obs_ha.prometheus_port }}"
+      alertmanager_url: "{{ _obs_ha.vip_scheme }}://{{ _vip_address }}:{{ _obs_ha.alertmanager_port }}"
+      grafana_url: "{{ _obs_ha.vip_scheme }}://{{ _vip_address }}:{{ _obs_ha.grafana_port }}"
+
+- name: Check HA endpoints with Ansible
+  ansible.builtin.include_tasks: endpoints/main.yml
+  vars:
+    _obs_endpoint_config: "{{ _obs_ha_endpoint_config }}"
+    _obs_endpoint_auth: "{{ hostvars[_obs_ha_peer].observability_auth | d(observability_auth | d({})) }}"
+    _obs_endpoint_host: "{{ _obs_ha_witness if _obs_ha_via_vip | d(false) else _obs_ha_peer }}"
+    _obs_endpoint_subject: "{{ _obs_ha_peer }}"
+    _obs_endpoint_roles: "{{ ['grafana'] if _obs_ha_mode == 'ha_grafana' else ['frontend'] }}"
+    _obs_endpoint_attempts: "{{ (_obs_ha_retries | d(_obs_ha.retries | d(36)) | int) + 1 }}"
+    _obs_endpoint_delay: "{{ _obs_ha_delay | d(_obs_ha.delay | d(5)) }}"
+
+- name: Require healthy endpoints before HA data checks
+  ansible.builtin.assert:
+    that: _obs_endpoint_results | rejectattr('value', 'equalto', 'ok') | list | length == 0
+    fail_msg: "Endpoint checks failed: {{ _obs_endpoint_results | to_json }}"
+
+- name: "HA probe {{ _obs_ha_mode }} on {{ _obs_ha_peer }}{{ ' through VIP' if _obs_ha_via_vip | d(false) else '' }}"
+  observability_probe:
+    phase: "{{ _obs_ha_mode }}"
+    config: >-
+      {{ _obs_ha_endpoint_config
+         | combine({'expected_targets': _obs_ha_targets | d([]),
+                    'frontend_hosts': _obs_ha_active_frontends | d([]),
+                    'require_progress': _obs_ha_progress | d(false),
+                    'previous_samples': (_obs_ha_baselines | d({})).get(_obs_ha_peer, {})}) }}
+    auth: "{{ hostvars[_obs_ha_peer].observability_auth | d(observability_auth | d({})) }}"
+  delegate_to: "{{ _obs_ha_witness if _obs_ha_via_vip | d(false) else _obs_ha_peer }}"
+  register: _obs_ha_probe
+  changed_when: false
+  ignore_unreachable: true
+  until: >-
+    _obs_ha_probe.results is defined and _obs_ha_probe.results | length > 0 and
+    (_obs_ha_probe.results | rejectattr('value', 'equalto', 'ok')
+     | rejectattr('value', 'match', '^skipped') | list | length == 0)
+  retries: "{{ _obs_ha_retries | d(_obs_ha.retries | d(36)) }}"
+  delay: "{{ _obs_ha_delay | d(_obs_ha.delay | d(5)) }}"
+
+- name: Reject unreachable or incomplete HA probe
+  ansible.builtin.assert:
+    that:
+      - not (_obs_ha_probe.unreachable | d(false))
+      - _obs_ha_probe.results is defined
+      - _obs_ha_probe.results | length > 0
+      - _obs_ha_probe.results | rejectattr('value', 'equalto', 'ok') | rejectattr('value', 'match', '^skipped') | list | length == 0
+    fail_msg: "HA probe failed on {{ _obs_ha_peer }}; see probe results above."
+
+- name: Save metric timestamps for this Prometheus instance
+  ansible.builtin.set_fact:
+    _obs_ha_baselines: "{{ (_obs_ha_baselines | d({})) | combine({_obs_ha_peer: _obs_ha_probe.ha.samples}) }}"
+  when: _obs_ha_capture | d(false) | bool

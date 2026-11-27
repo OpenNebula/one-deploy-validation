@@ -1,0 +1,182 @@
+---
+- name: Remember whether this source may start
+  ansible.builtin.set_fact:
+    _obs_alert_source_allowed: "{{ _obs_alert_safe }}"
+
+- name: Record skipped source after an unsafe cleanup
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ _obs_alert_source }} / Alert delivery pipeline"
+    result_value: skipped — previous source cleanup failed
+    result_comment: "No new alert is fired until the previous source is cleared."
+  when: not _obs_alert_source_allowed
+
+- name: Test this source and restore its rules
+  when: _obs_alert_source_allowed
+  vars:
+    _obs_alert_original: "{{ _obs_alert_states[_obs_alert_source].files.rules.parsed }}"
+    _obs_test_group:
+      name: "ODVValidation_{{ _obs_alert_run }}"
+      interval: 5s
+      rules:
+        - alert: "ODVValidation_{{ _obs_alert_run }}"
+          expr: "{{ _obs_alert_expression }}"
+          labels:
+            odv_run_id: "{{ _obs_alert_run }}"
+            odv_source: "{{ _obs_alert_source }}"
+    _obs_alert_content: >-
+      {{ _obs_alert_original | combine({'groups': (_obs_alert_original.groups | d([])) + [_obs_test_group]}) | to_nice_json }}
+    _obs_firing_alerts: >-
+      {{ _obs_alert_json.data.alerts
+         | selectattr('labels.odv_run_id', 'defined')
+         | selectattr('labels.odv_run_id', 'equalto', _obs_alert_run)
+         | selectattr('state', 'equalto', 'firing') | list }}
+  block:
+    - name: Require resolution before any Alertmanager routes can be removed
+      ansible.builtin.set_fact:
+        _obs_alert_safe: false
+
+    - name: Install the source test rule
+      ansible.builtin.include_tasks: alert/write.yml
+      vars:
+        _obs_alert_file: rules
+        _obs_alert_peer: "{{ _obs_alert_source }}"
+        _obs_alert_expression: vector(1)
+
+    - name: Wait for the source rule to fire
+      ansible.builtin.include_tasks: alert/http.yml
+      vars:
+        _obs_alert_peer: "{{ _obs_alert_source }}"
+        _obs_alert_service: prometheus
+        _obs_alert_path: /api/v1/alerts
+        _obs_alert_check: firing
+        _obs_expected_response: >-
+          {{ _obs_alert_json.data.alerts is defined and _obs_firing_alerts | length > 0 }}
+
+    - name: Confirm delivery to every discovered Alertmanager
+      ansible.builtin.include_tasks: alert/http.yml
+      loop: "{{ _obs_alert_states[_obs_alert_source].destinations }}"
+      loop_control:
+        loop_var: _obs_alert_peer
+      vars:
+        _obs_alert_service: alertmanager
+        _obs_alert_path: >-
+          /api/v2/alerts?filter={{ ('odv_run_id="' ~ _obs_alert_run ~ '"') | urlencode }}
+        _obs_alert_check: alert received
+        _obs_expected_response: >-
+          {{ (_obs_alert_json | type_debug) == 'list' and _obs_alert_json | length > 0 }}
+
+    - name: Reset webhook evidence for this source
+      ansible.builtin.set_fact:
+        _obs_alert_delivered: false
+
+    - name: Poll cluster receiver files for this source
+      ansible.builtin.include_tasks: alert/received.yml
+      loop: "{{ range(0, (_obs_alert_states[_obs_alert_source].cfg.wait_timeout | int / _obs_alert_states[_obs_alert_source].cfg.poll_interval | int) | round(0, 'ceil') | int) | list }}"
+      loop_control:
+        loop_var: _obs_alert_attempt
+
+    - name: Require webhook evidence independently of Prometheus and Alertmanager APIs
+      ansible.builtin.assert:
+        that: _obs_alert_delivered | bool
+        fail_msg: "No test receiver received the firing alert from {{ _obs_alert_source }}."
+
+    - name: Record successful source delivery
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_alert_source }} / Alert delivery pipeline"
+        result_value: ok
+        result_comment: "Prometheus fired the test rule; discovered Alertmanagers received it; a cluster receiver confirmed the webhook."
+
+  rescue:
+    - name: Record source delivery failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_alert_source }} / Alert delivery pipeline"
+        result_value: failed
+        result_comment: "Failed at {{ ansible_failed_task.name | d('unknown task') }}."
+
+  always:
+    - name: Resolve the test alert while isolated routes are still active
+      block:
+        - name: Make the temporary expression stop firing
+          ansible.builtin.include_tasks: alert/write.yml
+          vars:
+            _obs_alert_file: rules
+            _obs_alert_peer: "{{ _obs_alert_source }}"
+            _obs_alert_expression: vector(0) == 1
+          when: _obs_alert_states[_obs_alert_source].rules_touched | d(false)
+
+        - name: Confirm the source has stopped firing
+          ansible.builtin.include_tasks: alert/http.yml
+          vars:
+            _obs_alert_peer: "{{ _obs_alert_source }}"
+            _obs_alert_service: prometheus
+            _obs_alert_path: /api/v1/alerts
+            _obs_alert_check: resolved
+            _obs_expected_response: >-
+              {{ _obs_alert_json.data.alerts is defined and _obs_firing_alerts | length == 0 }}
+
+      rescue:
+        - name: Continue with exact original-rule restoration
+          ansible.builtin.debug:
+            msg: "Resolution was not confirmed; restore the original rules and recheck all destinations."
+
+    - name: Restore original rules and verify complete alert removal
+      block:
+        - name: Restore exact original source rule file
+          ansible.builtin.include_tasks: alert/write.yml
+          vars:
+            _obs_alert_peer: "{{ _obs_alert_source }}"
+            _obs_alert_file: rules
+            _obs_alert_restore: true
+          when: _obs_alert_states[_obs_alert_source].rules_touched | d(false)
+
+        - name: Confirm the temporary rule is no longer loaded
+          ansible.builtin.include_tasks: alert/http.yml
+          vars:
+            _obs_alert_peer: "{{ _obs_alert_source }}"
+            _obs_alert_service: prometheus
+            _obs_alert_path: /api/v1/rules
+            _obs_alert_check: rule removed
+            _obs_expected_response: >-
+              {{ _obs_alert_json.data.groups is defined and
+                 _obs_alert_json.data.groups | map(attribute='rules') | flatten
+                 | selectattr('name', 'equalto', ('ODVValidation_' ~ _obs_alert_run)) | list | length == 0 }}
+
+        - name: Confirm no test alert remains on any Alertmanager
+          ansible.builtin.include_tasks: alert/http.yml
+          loop: "{{ _obs_alert_peers }}"
+          loop_control:
+            loop_var: _obs_alert_peer
+          vars:
+            _obs_alert_service: alertmanager
+            _obs_alert_path: >-
+              /api/v2/alerts?filter={{ ('odv_run_id="' ~ _obs_alert_run ~ '"') | urlencode }}
+            _obs_alert_check: alert cleared
+            _obs_expected_response: >-
+              {{ _obs_alert_json == [] }}
+
+        - name: Permit the next source and eventual route removal
+          ansible.builtin.set_fact:
+            _obs_alert_safe: true
+
+      rescue:
+        - name: Keep isolated routes when source restoration cannot be confirmed
+          ansible.builtin.set_fact:
+            _obs_alert_safe: false
+
+        - name: Record source cleanup failure and recovery files
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_result.yml
+          vars:
+            result_key: "Observability / {{ _obs_alert_source }} / Alert pipeline cleanup"
+            result_value: failed
+            result_comment: "Source cleanup failed at {{ ansible_failed_task.name | d('unknown task') }}. Isolated routes retained; backups: {{ _obs_alert_states[_obs_alert_source].directory }}. Restore rules, reload Prometheus and confirm alerts are resolved before removing routes."

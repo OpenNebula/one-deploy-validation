@@ -1,0 +1,121 @@
+---
+- name: Initialize frontend cleanup status
+  ansible.builtin.set_fact:
+    _obs_alert_peer_clean: "{{ _obs_alert_safe }}"
+
+- name: Restore Alertmanager after all test alerts have cleared
+  when: _obs_alert_safe and (_obs_alert_states[_obs_alert_peer].alertmanager_touched | d(false))
+  block:
+    - name: Restore exact original Alertmanager configuration
+      ansible.builtin.include_tasks: alert/write.yml
+      vars:
+        _obs_alert_file: alertmanager
+        _obs_alert_restore: true
+
+    - name: Confirm original Alertmanager configuration is loaded
+      ansible.builtin.include_tasks: alert/http.yml
+      vars:
+        _obs_alert_service: alertmanager
+        _obs_alert_path: /api/v2/status
+        _obs_alert_check: route removed
+        _obs_expected_response: >-
+          {{ _obs_alert_json.config.original is string and _obs_alert_run not in _obs_alert_json.config.original }}
+
+  rescue:
+    - name: Retain backups after route restoration failure
+      ansible.builtin.set_fact:
+        _obs_alert_peer_clean: false
+
+- name: Stop and reap this temporary receiver
+  when: _obs_alert_states[_obs_alert_peer].job is defined
+  block:
+    - name: Request graceful receiver shutdown
+      ansible.builtin.copy:
+        content: stop
+        dest: "{{ _obs_alert_states[_obs_alert_peer].directory }}/stop"
+        mode: '0600'
+      delegate_to: "{{ _obs_alert_peer }}"
+      ignore_unreachable: true
+      register: _obs_alert_operation
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_operation }}"
+
+    - name: Wait for receiver process termination
+      ansible.builtin.async_status:
+        jid: "{{ _obs_alert_states[_obs_alert_peer].job }}"
+      delegate_to: "{{ _obs_alert_peer }}"
+      register: _obs_alert_stopped
+      until: _obs_alert_stopped.finished | d(false) | bool
+      retries: 12
+      delay: 1
+      ignore_unreachable: true
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_stopped }}"
+
+    - name: Remove completed asynchronous job metadata
+      ansible.builtin.async_status:
+        jid: "{{ _obs_alert_states[_obs_alert_peer].job }}"
+        mode: cleanup
+      delegate_to: "{{ _obs_alert_peer }}"
+      ignore_unreachable: true
+      register: _obs_alert_operation
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_operation }}"
+
+  rescue:
+    - name: Retain recovery files after receiver shutdown failure
+      ansible.builtin.set_fact:
+        _obs_alert_peer_clean: false
+
+- name: Remove recovery files and release owned lock after successful cleanup
+  when: _obs_alert_peer_clean
+  block:
+    - name: Remove temporary files and backups
+      ansible.builtin.file:
+        path: "{{ _obs_alert_states[_obs_alert_peer].directory }}"
+        state: absent
+      delegate_to: "{{ _obs_alert_peer }}"
+      when: _obs_alert_states[_obs_alert_peer].directory is defined
+      ignore_unreachable: true
+      register: _obs_alert_operation
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_operation }}"
+
+    - name: Release owned configuration lock
+      ansible.builtin.file:
+        path: "{{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}.odv-lock"
+        state: absent
+      delegate_to: "{{ _obs_alert_peer }}"
+      when: _obs_alert_states[_obs_alert_peer].locked | d(false)
+      ignore_unreachable: true
+      register: _obs_alert_operation
+
+    - ansible.builtin.import_tasks: connection.yml
+      vars:
+        _obs_result: "{{ _obs_alert_operation }}"
+
+  rescue:
+    - name: Mark temporary resource cleanup failure
+      ansible.builtin.set_fact:
+        _obs_alert_peer_clean: false
+
+- name: Report retained routes or recovery resources
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Observability / {{ _obs_alert_peer }} / Alert pipeline cleanup"
+    result_value: failed
+    result_comment: >-
+      Cleanup incomplete; backups: {{ _obs_alert_states[_obs_alert_peer].directory | d('not created') }};
+      lock: {{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}.odv-lock.
+      Resolve test alerts before restoring Alertmanager configuration; remove the owned lock after manual recovery.
+  when: not _obs_alert_peer_clean

@@ -1,0 +1,137 @@
+---
+- name: Initialize this Grafana instance recovery state
+  ansible.builtin.set_fact:
+    _obs_grafana_mutated: false
+    _obs_grafana_run_this_host: "{{ not _obs_grafana_abort }}"
+
+- name: Stop and start Grafana instance
+  when: _obs_grafana_run_this_host
+  vars:
+    _obs_ha_service_host: "{{ _obs_grafana_host }}"
+    _obs_ha_check_units: "{{ [_obs_grafana_restart.service] }}"
+    _obs_ha_peer: "{{ _obs_grafana_host }}"
+    _obs_ha_mode: ha_grafana
+  block:
+    - name: Require local configuration from baseline checks
+      ansible.builtin.assert:
+        that:
+          - hostvars[_obs_grafana_host].odv_observability_config is defined
+          - _obs_grafana_host in groups[grafana_group | d('grafana')]
+
+    - name: Require Grafana active before stopping it
+      ansible.builtin.include_tasks: ha/units.yml
+      vars:
+        _obs_ha_unit_state: active
+
+    - name: Verify Grafana readiness datasource and dashboards before stopping
+      ansible.builtin.include_tasks: ha/probe.yml
+      vars:
+        _obs_ha_retries: "{{ _obs_grafana_restart.retries }}"
+        _obs_ha_delay: "{{ _obs_grafana_restart.delay }}"
+
+    - name: Arm Grafana recovery
+      ansible.builtin.set_fact:
+        _obs_grafana_mutated: true
+
+    - name: Stop only Grafana on this host
+      ansible.builtin.systemd_service:
+        name: "{{ _obs_grafana_restart.service }}"
+        state: stopped
+      delegate_to: "{{ _obs_grafana_host }}"
+      ignore_unreachable: true
+
+    - name: Confirm Grafana service is inactive
+      ansible.builtin.include_tasks: ha/units.yml
+      vars:
+        _obs_ha_unit_state: inactive
+
+    - name: Confirm direct Grafana HTTP endpoint is unavailable
+      ansible.builtin.uri:
+        url: "{{ hostvars[_obs_grafana_host].odv_observability_config.grafana_url | regex_replace('/$', '') }}/api/health"
+        validate_certs: "{{ hostvars[_obs_grafana_host].odv_observability_config.validate_certs }}"
+        timeout: 5
+        use_proxy: false
+      delegate_to: "{{ _obs_grafana_host }}"
+      register: _obs_grafana_down
+      failed_when: false
+      ignore_unreachable: true
+      until: _obs_grafana_down.status | d(0) == -1
+      retries: "{{ _obs_grafana_restart.retries }}"
+      delay: "{{ _obs_grafana_restart.delay }}"
+
+    - name: Reject unreachable host or still responding HTTP service
+      ansible.builtin.assert:
+        that:
+          - not (_obs_grafana_down.unreachable | d(false))
+          - _obs_grafana_down.status | d(0) == -1
+
+    - name: Record confirmed Grafana stop
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_grafana_host }} / Grafana service stop-start"
+        result_value: ok
+        result_comment: "Service stopped; direct HTTP endpoint unavailable. Recovery is reported separately."
+
+  rescue:
+    - name: Stop subsequent Grafana fault injection
+      ansible.builtin.set_fact:
+        _obs_grafana_abort: true
+
+    - name: Record Grafana stop-start failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Observability / {{ _obs_grafana_host }} / Grafana service stop-start"
+        result_value: failed
+        result_comment: "Failed at {{ ansible_failed_task.name | d('Grafana preflight') }}; see task output."
+
+  always:
+    - name: Recover Grafana when any stop was attempted
+      when: _obs_grafana_mutated
+      block:
+        - name: Start Grafana regardless of validation outcome
+          ansible.builtin.systemd_service:
+            name: "{{ _obs_grafana_restart.service }}"
+            state: started
+          delegate_to: "{{ _obs_grafana_host }}"
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Confirm Grafana became active
+          ansible.builtin.include_tasks: ha/units.yml
+          vars:
+            _obs_ha_unit_state: active
+            _obs_ha_retries: "{{ _obs_grafana_restart.retries }}"
+            _obs_ha_delay: "{{ _obs_grafana_restart.delay }}"
+
+        - name: Verify readiness datasource and dashboards after restart
+          ansible.builtin.include_tasks: ha/probe.yml
+          vars:
+            _obs_ha_retries: "{{ _obs_grafana_restart.retries }}"
+            _obs_ha_delay: "{{ _obs_grafana_restart.delay }}"
+
+        - name: Record Grafana recovery
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_result.yml
+          vars:
+            result_key: "Observability / {{ _obs_grafana_host }} / Grafana service recovery"
+            result_value: ok
+            result_comment: "Service active; readiness, datasource queries and dashboards verified."
+
+      rescue:
+        - name: Prevent further Grafana stops after recovery failure
+          ansible.builtin.set_fact:
+            _obs_grafana_abort: true
+
+        - name: Record Grafana recovery failure
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_result.yml
+          vars:
+            result_key: "Observability / {{ _obs_grafana_host }} / Grafana service recovery"
+            result_value: failed
+            result_comment: "Recovery failed at {{ ansible_failed_task.name | d('unknown stage') }}; check {{ _obs_grafana_restart.service }} on {{ _obs_grafana_host }}."

@@ -81,6 +81,18 @@
       ansible.builtin.debug:
         msg: "WARNING: /tmp/odv_manifest.json is corrupt — pre-run cleanup skipped"
 
+# An interrupted run can persist reused resources too. Never delete them.
+- name: Exclude reused resources from previous-run cleanup
+  ansible.builtin.set_fact:
+    _preclean_entries: >-
+      {%- set owned = [] -%}
+      {%- for entry in _preclean_entries | d([]) -%}
+        {%- if entry.disposition | d('created') == 'created' -%}
+          {%- set _ = owned.append(entry) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ owned }}
+
 - name: Split the mirror into actionable (cluster-object) and carry-through entries
   vars:
     _preclean_actionable_types: [vm, service, service_template, vnet, template, image]

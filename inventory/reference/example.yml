@@ -9,3 +9,9 @@ node:
   hosts:
     h1: { ansible_host: 172.20.0.5 }
     h2: { ansible_host: 172.20.0.6 }
+
+# Enable when monitoring is deployed; add every Grafana instance here.
+# Hosts may also belong to frontend, or be dedicated Grafana servers.
+# grafana:
+#   hosts:
+#     fe: {}

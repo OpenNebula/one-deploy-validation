@@ -1,0 +1,20 @@
+---
+# Re-evaluate the latest onezone response on each election retry.
+_obs_zone_leader: >-
+  {{ _obs_ha_zone.stdout | from_json
+     | odv_raft_leader(_obs_ha_frontends, _obs_ha_required_active, _obs_ha_excluded_leader | d('')) }}
+
+_obs_frontend_hosts: "{{ groups[frontend_group | d('frontend')] | d([]) }}"
+_obs_node_hosts: "{{ groups[node_group | d('node')] | d([]) }}"
+_obs_grafana_group_hosts: "{{ groups[grafana_group | d('grafana')] | d([]) }}"
+
+# Select the file, validator and service as one unit for a write or restoration.
+_obs_alert_file_settings:
+  rules:
+    path: "{{ _obs_alert_states[_obs_alert_peer].cfg.rules_file }}"
+    validate: "{{ _obs_alert_states[_obs_alert_peer].cfg.promtool }} check rules %s"
+    service: "{{ _obs_alert_states[_obs_alert_peer].cfg.prometheus_service }}"
+  alertmanager:
+    path: "{{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_config }}"
+    validate: "{{ _obs_alert_states[_obs_alert_peer].cfg.amtool }} check-config %s"
+    service: "{{ _obs_alert_states[_obs_alert_peer].cfg.alertmanager_service }}"

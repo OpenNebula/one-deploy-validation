@@ -1,0 +1,52 @@
+---
+- name: Query and verify OpenNebula leader from a running frontend
+  become: true
+  become_user: oneadmin
+  ansible.builtin.command:
+    argv: [onezone, show, "{{ _obs_ha.zone }}", --json]
+  delegate_to: "{{ _obs_ha_identity_host }}"
+  register: _obs_ha_zone
+  changed_when: false
+  ignore_unreachable: true
+  until: _obs_ha_zone.rc | d(1) == 0 and _obs_zone_leader | length > 0
+  retries: "{{ _obs_ha.retries }}"
+  delay: "{{ _obs_ha.delay }}"
+
+- name: Require a reachable zone query
+  ansible.builtin.assert:
+    that:
+      - not (_obs_ha_zone.unreachable | d(false))
+      - _obs_ha_zone.rc | d(1) == 0
+
+- name: Remember the elected frontend
+  ansible.builtin.set_fact:
+    _obs_elected_frontend: "{{ _obs_zone_leader }}"
+
+- name: Verify VIP exists only on the expected leader
+  ansible.builtin.command:
+    argv:
+      - ip
+      - -j
+      - address
+      - show
+      - to
+      - "{{ _obs_ha.vip }}/{{ '128' if ':' in _obs_ha.vip else '32' }}"
+  loop: "{{ _obs_ha_hosts }}"
+  delegate_to: "{{ item }}"
+  register: _obs_ha_vip_result
+  changed_when: false
+  ignore_unreachable: true
+  until: >-
+    _obs_ha_vip_result.rc | d(1) == 0 and
+    (((_obs_ha_vip_result.stdout | from_json)
+       | map(attribute='addr_info', default=[]) | flatten | length > 0)
+      == (item == _obs_elected_frontend))
+  retries: "{{ _obs_ha.retries }}"
+  delay: "{{ _obs_ha.delay }}"
+
+- name: Reject incomplete or unreachable VIP ownership checks
+  ansible.builtin.assert:
+    that:
+      - _obs_ha_vip_result.results | length == _obs_ha_hosts | length
+      - _obs_ha_vip_result.results | selectattr('unreachable', 'defined') | selectattr('unreachable') | list | length == 0
+      - _obs_ha_vip_result.results | map(attribute='rc', default=1) | reject('equalto', 0) | list | length == 0

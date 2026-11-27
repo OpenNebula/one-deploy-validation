@@ -1,0 +1,9 @@
+---
+- name: Record observability finding
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ _obs_result.key }}"
+    result_value: "{{ _obs_result.value }}"
+    result_comment: "{{ _obs_result.comment }}"

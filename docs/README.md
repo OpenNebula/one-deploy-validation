@@ -9,6 +9,7 @@ See the [test catalog](../README.md#test-catalog) in the main README for enabler
 - [Core Services](validation.md)
 - [Host reboot](host_reboot.md)
 - [Networking subsystem](network_validation.md)
+- [Storage validation](storage_validation.md)
 - [Storage benchmark](storage-benchmark.md)
 - [Network benchmark](network-benchmark.md)
 - [OneFlow smoke test](oneflow_validation.md)

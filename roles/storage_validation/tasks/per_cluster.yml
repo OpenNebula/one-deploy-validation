@@ -1,0 +1,35 @@
+---
+- name: Select monitored KVM host IDs in numeric order
+  ansible.builtin.set_fact:
+    _sv_host_ids: >-
+      {{ host_list | selectattr('VM_MAD', 'defined') | selectattr('VM_MAD', 'equalto', 'kvm')
+         | selectattr('STATE', 'in', ['1', '2', 1, 2])
+         | map(attribute='ID') | map('int') | intersect(_sv_cluster.host_ids | map('int') | list) | sort }}
+
+- name: Report cluster without a monitored KVM host
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "Storage validation [cluster {{ _sv_cluster.name }}]"
+    result_value: skipped - no monitored KVM host
+  when: not _sv_host_ids
+
+- name: Exercise the disk lifecycle on the selected host
+  vars:
+    _sv_host_id: "{{ _sv_host_ids | first }}"
+    _sv_label: "Storage validation [cluster {{ _sv_cluster.name }}, host ID {{ _sv_host_id }}]"
+  when: _sv_host_ids | length > 0
+  block:
+    - name: Prepare owned resources
+      ansible.builtin.include_tasks: prepare.yml
+
+    - name: Exercise each storage transition
+      ansible.builtin.include_tasks: step.yml
+      loop: [attach, reboot, redeploy, detach]
+      loop_control:
+        loop_var: _sv_step
+
+  always:
+    - name: Release owned resources
+      ansible.builtin.include_tasks: cleanup.yml

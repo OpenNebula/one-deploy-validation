@@ -24,6 +24,14 @@
 - name: Prepare lifecycle template and run hosts in cluster {{ vml_cluster.name }}
   when: _vml_eligible_ids | length > 0
   block:
+    - name: Create private directory for the lifecycle probe and its VM helpers
+      ansible.builtin.tempfile:
+        prefix: odv-vml-
+        state: directory
+      register: _vml_probe_dir
+      become: true
+      become_user: oneadmin
+
     - name: Ensure lifecycle VM template exists
       ansible.builtin.include_role:
         name: validation_common
@@ -37,7 +45,6 @@
 
     - name: Prepare lifecycle probe inputs and async runtime
       ansible.builtin.set_fact:
-        _vml_probe_path: "/tmp/odv-vml-probe-{{ _vml_run_id }}.py"
         _vml_host_addresses: >-
           {%- set out = {} -%}
           {%- for host in host_list | d([]) -%}
@@ -55,11 +62,14 @@
 
     - name: Stage lifecycle probe for asynchronous execution
       ansible.builtin.copy:
-        src: lifecycle_probe.py
-        dest: "{{ _vml_probe_path }}"
+        src: "{{ item }}"
+        dest: "{{ _vml_probe_dir.path }}/{{ item | basename }}"
         mode: "0700"
       become: true
       become_user: oneadmin
+      loop:
+        - lifecycle_probe.py
+        - "{{ role_path }}/../validation_common/files/odv_vm.py"
 
     - name: Register every lifecycle VM before launching probes
       ansible.builtin.include_role:
@@ -81,7 +91,7 @@
       ansible.builtin.command:
         argv:
           - python3
-          - "{{ _vml_probe_path }}"
+          - "{{ _vml_probe_dir.path }}/lifecycle_probe.py"
           - "{{ _vml_probe_config | to_json | b64encode }}"
       vars:
         _vml_probe_config: >-
@@ -124,8 +134,8 @@
   always:
     - name: Remove staged lifecycle probe
       ansible.builtin.file:
-        path: "{{ _vml_probe_path }}"
+        path: "{{ _vml_probe_dir.path }}"
         state: absent
       become: true
       become_user: oneadmin
-      when: _vml_probe_path is defined
+      when: _vml_probe_dir.path is defined

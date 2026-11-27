@@ -1,0 +1,17 @@
+---
+- name: Require a confirmed physical reboot and recovered host monitoring
+  ansible.builtin.set_fact:
+    _sv_blocked: host reboot or monitoring recovery was not confirmed
+  when: not _sv_blocked and not _hr_storage_recovered
+
+- name: Verify the disk on the recovered host and hot-detach it
+  block:
+    - name: Resume the guest, verify the payload, and check hot-detach
+      ansible.builtin.include_tasks: step.yml
+      loop: [resume, detach]
+      loop_control:
+        loop_var: _sv_step
+  always:
+    - name: Release the host reboot probe resources
+      ansible.builtin.include_tasks: cleanup.yml
+      when: not _hr_storage_cleaned

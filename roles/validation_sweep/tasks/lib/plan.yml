@@ -7,8 +7,8 @@
 #              odv_leftovers by the owning role), with added 'action':
 #              delete | keep-reused | keep-by-flag.
 # Rules: if ANY duplicate says 'created' the resource is ours -> delete;
-# all-'reused' -> keep-reused; images/templates are kept when the
-# keep_exported_images flag is set; the first non-empty id among dupes wins.
+# all-'reused' -> keep-reused. keep_exported_images retains base images and
+# templates. A scratch image registered with delete_always is disposable.
 
 - name: Compute sweep plan
   ansible.builtin.set_fact:
@@ -29,7 +29,8 @@
           {%- set created = (dupes | selectattr('disposition', 'equalto', 'created') | list | length) > 0 -%}
           {%- if not created -%}
             {%- set action = 'keep-reused' -%}
-          {%- elif e.type in ['image', 'template'] and keep_images -%}
+          {%- elif e.type in ['image', 'template'] and keep_images
+                and not (e.delete_always | d(false) | bool) -%}
             {%- set action = 'keep-by-flag' -%}
           {%- else -%}
             {%- set action = 'delete' -%}

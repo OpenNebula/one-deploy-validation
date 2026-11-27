@@ -17,6 +17,10 @@
     - inventory_hostname == groups[frontend_group | d('frontend')][0]
   vars:
     _hr_allow_frontend_shutdown: "{{ validation.host_reboot.allow_frontend_shutdown | d(false) | bool }}"
+    _hr_storage_selected: >-
+      {{ validation.run_storage_validation | d(false) | bool
+         and (ansible_run_tags | intersect(['all', 'storage_validation']) | length > 0)
+         and 'storage_validation' not in ansible_skip_tags }}
     _hr_frontends: "{{ groups[frontend_group | d('frontend')] }}"
   block:
     - name: Parse user target preference
@@ -179,8 +183,15 @@
       loop_control:
         loop_var: selected_node
         label: "{{ selected_node }}"
+      vars:
+        _hr_registered_host: "{{ _hr_host_matches | first | d({}) }}"
+        _sv_host_id: "{{ _hr_registered_host.ID | d('') }}"
+        _sv_cluster: "{{ host_id_to_cluster.get(_sv_host_id | string, {}) }}"
+        _sv_label: "Storage validation [cluster {{ _sv_cluster.name | d('unresolved') }}, host {{ selected_node }}, physical reboot]"
+        _hr_storage_eligible: >-
+          {{ _hr_storage_selected and _hr_host_matches | length == 1 and _sv_cluster and (_hr_registered_host.VM_MAD | d('') | lower == 'kvm')
+             and (_hr_registered_host.STATE | d('') | string in ['1', '2']) }}
       when:
-        - _hr_host_pool.rc | d(1) == 0
         - (_hr_target_preference | length) > 0
         - not ansible_check_mode
 
@@ -193,6 +204,7 @@
           {{
             (verification_result | default({})) | dict2items
             | rejectattr('key', 'equalto', 'Host reboot validation')
+            | rejectattr('key', 'match', '^Storage validation')
             | selectattr('key', 'search', 'reboot|re-monitoring|System journal')
             | selectattr('value', 'string')
             | selectattr('value', 'search', 'failed|error')

@@ -340,10 +340,11 @@
 {% set deployment_other_components = 'None detected' %}
 {% set deployment_applications = 'OpenNebula command line tool' %}
 
-{% set ns = namespace(core_services=[], vm_tests=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], host_reboot=[], other=[]) %}
+{% set ns = namespace(core_services=[], vm_tests=[], storage=[], ldap=[], oneflow=[], vm_ha=[], fe_ha=[], federation=[], host_reboot=[], other=[]) %}
 {% for k, v in checks.items() %}
   {% set kl = k | lower %}
-  {% if 'oneflow' in kl %}{% set _ = ns.oneflow.append((k, v)) %}
+  {% if kl.startswith('storage validation') %}{% set _ = ns.storage.append((k, v)) %}
+  {% elif 'oneflow' in kl %}{% set _ = ns.oneflow.append((k, v)) %}
   {% elif 'ldap' in kl or 'rpc2' in kl %}{% set _ = ns.ldap.append((k, v)) %}
   {% elif 'reboot' in kl or 'node re-monitoring' in kl %}{% set _ = ns.host_reboot.append((k, v)) %}
   {% elif 'service' in kl or 'xml-rpc' in kl or 'oned version' in kl or 'repository' in kl or 'datastore' in kl or 'marketplace' in kl or 'registered kvm' in kl or 'hosts status' in kl %}{% set _ = ns.core_services.append((k, v)) %}
@@ -477,6 +478,7 @@
   {% endif %}
 
   {{ render_check_table(ns.core_services, "Core Services", "core") }}
+  {{ render_check_table(ns.storage, "Storage Validation", "storage_validation") }}
   {{ render_check_table(ns.vm_tests, "VM Instantiation Tests", "vm") }}
   {{ render_check_table(ns.oneflow, "OneFlow Smoke Test", "oneflow") }}
   {{ render_check_table(ns.ldap, "LDAP Authentication", "ldap") }}
@@ -860,6 +862,8 @@
      'prefixes': ['Host reboot', 'Node reboot', 'OpenNebula node re-monitoring', 'post-reboot']},
     {'label': 'Test VM',             'flag': validation_vars.run_test_vm | default(true),
      'prefixes': ['Test VM', 'Test network creation', 'Connection to the test VM']},
+    {'label': 'Storage validation',  'flag': validation_vars.run_storage_validation | default(false),
+     'prefixes': ['Storage validation']},
     {'label': 'Storage benchmark',   'flag': validation_vars.run_storage_benchmark | default(true),
      'prefixes': ['Storage benchmark']},
     {'label': 'Network validation',  'flag': validation_vars.networks_verification | default(true),

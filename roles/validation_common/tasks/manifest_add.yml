@@ -11,6 +11,7 @@
 #   manifest_name        - resource name / path / package / process pattern
 #   manifest_cluster     - cluster name, '' when not cluster-bound (optional)
 #   manifest_role        - role slug that owns the resource
+#   manifest_delete_always - sweep a created scratch image even when retaining exports (optional)
 #   manifest_disposition - created|reused (optional, default created)
 
 - name: "Manifest: {{ manifest_type }} '{{ manifest_name }}' ({{ manifest_disposition | d('created') }})"
@@ -24,7 +25,8 @@
            'role': manifest_role,
            'disposition': manifest_disposition | d('created'),
            'detail': manifest_detail | d(''),
-           'host': inventory_hostname }] }}
+           'host': inventory_hostname
+         } | combine({'delete_always': true} if manifest_delete_always | d(false) | bool else {})] }}
 
 - name: "Manifest: mirror to /tmp/odv_manifest.json"
   ansible.builtin.copy:

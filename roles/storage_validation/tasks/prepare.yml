@@ -1,0 +1,64 @@
+---
+- name: Initialize a fresh storage scenario
+  ansible.builtin.set_fact:
+    _sv_name: "odv-storage-{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_lowercase', 'digits']) }}"
+    _sv_state: {}
+    _sv_blocked: ''
+    _sv_registered: false
+
+- name: Prepare the cluster network, template and cleanup manifest
+  block:
+    - name: Ensure the configured test network exists when selected by discovery
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: ensure_test_vnet.yml
+      vars:
+        ensure_vnet_cluster: "{{ _sv_cluster }}"
+        ensure_role: storage_validation
+      when:
+        - _sv_cluster.vnet_name not in _sv_cluster.vnet_names
+        - not _sv_cluster.vnet_override
+        - validation.test_vm.create_vnet | d(false)
+
+    - name: Ensure the shared VM template exists
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: ensure_test_template.yml
+      vars:
+        ensure_app_name: "{{ _sv_market_name }}"
+        ensure_name: "{{ _sv_market_name }}{{ _sv_cluster.name_suffix }}"
+        ensure_ds_id: "{{ _sv_cluster.image_ds_id }}"
+        ensure_cluster: "{{ _sv_cluster.name }}"
+        ensure_role: storage_validation
+
+    - name: Register the disposable VM and data image before creation
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: "{{ resource.type }}"
+        manifest_name: "{{ resource.name }}"
+        manifest_cluster: "{{ _sv_cluster.name }}"
+        manifest_role: storage_validation
+        manifest_delete_always: "{{ resource.type == 'image' }}"
+      loop:
+        - {type: vm, name: "{{ _sv_name }}"}
+        - {type: image, name: "{{ _sv_name }}-data"}
+      loop_control:
+        loop_var: resource
+
+    - name: Enable cleanup for this scenario
+      ansible.builtin.set_fact:
+        _sv_registered: true
+
+  rescue:
+    - name: Record storage preparation failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "{{ _sv_label }} preparation"
+
+    - name: Skip dependent disk operations
+      ansible.builtin.set_fact:
+        _sv_blocked: storage preparation did not complete

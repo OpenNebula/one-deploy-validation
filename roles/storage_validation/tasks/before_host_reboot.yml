@@ -1,0 +1,24 @@
+---
+- name: Prepare the disposable host reboot VM
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: Seed the data disk and power off the VM on the selected hypervisor
+  ansible.builtin.include_tasks: step.yml
+  loop: [attach, poweroff]
+  loop_control:
+    loop_var: _sv_step
+
+- name: Clean up an incomplete storage setup before taking the host offline
+  when: _sv_blocked | length > 0
+  block:
+    - name: Remove partially created resources
+      ansible.builtin.include_tasks: cleanup.yml
+
+    - name: Remember completed cleanup
+      ansible.builtin.set_fact:
+        _hr_storage_cleaned: "{{ not _sv_cleanup_errors }}"
+
+    - name: Require the interrupted storage VM to be gone before reboot
+      ansible.builtin.assert:
+        that: _sv_cleanup_errors | selectattr('item.type', 'equalto', 'vm') | list | length == 0
+        fail_msg: "Could not confirm removal of {{ _sv_name }} before host reboot."

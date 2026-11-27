@@ -16,13 +16,8 @@
 #    reached the final sweep play) — some of those entries may already be
 #    gone (cleaned by their own role's own always: block before the abort).
 # Either way every delete below is tolerant of an already-absent resource,
-# mirroring sweep_one_objects.yml's ABSENT/GONE/STUCK style (become_user
-# oneadmin, failed_when: false, converge-wait where the object supports it).
-# This is NOT a call to sweep_one_objects.yml itself: that file works off
-# _sweep_plan (lib/plan.yml's created/reused dedup computed across ALL play
-# hosts' current-run manifests), which doesn't apply here — every entry in
-# the mirror at this point is already known-unresolved from last time, with
-# nothing to dedup against.
+# mirroring sweep_one_objects.yml's ABSENT/GONE/STUCK style. Apply the same
+# ownership and keep-exported-images rules to the mirror before deleting.
 #
 # Local types (file/package/process/ip_addr) and host_state are left alone
 # entirely here (not even re-checked): they are cheap, host-local, and
@@ -87,6 +82,22 @@
   ansible.builtin.set_fact:
     _preclean_actionable: "{{ _preclean_entries | d([]) | selectattr('type', 'in', _preclean_actionable_types) | list }}"
     _preclean_carry: "{{ _preclean_entries | d([]) | rejectattr('type', 'in', _preclean_actionable_types) | list }}"
+
+# An interrupted run can leave the full manifest, including reused base
+# images/templates. Legacy leftover rows may lack a disposition.
+- name: Plan cleanup of previous-run cloud objects
+  ansible.builtin.include_tasks: lib/plan.yml
+  vars:
+    _sweep_manifest: >-
+      {%- set entries = [] -%}
+      {%- for entry in _preclean_actionable -%}
+        {%- set _ = entries.append({'disposition': 'created', 'id': ''} | combine(entry)) -%}
+      {%- endfor -%}
+      {{ entries }}
+
+- name: Retain only objects owned by the prior run and scheduled for deletion
+  ansible.builtin.set_fact:
+    _preclean_actionable: "{{ _sweep_plan | selectattr('action', 'equalto', 'delete') | list }}"
 
 # Fold carry-through entries into THIS run's live manifest fact so they
 # survive the file being overwritten by this run's own first

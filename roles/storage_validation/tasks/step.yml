@@ -1,0 +1,36 @@
+---
+- name: "{{ _sv_label }} {{ _sv_checks[_sv_step] }}"
+  storage_probe:
+    operation: "{{ _sv_step }}"
+    name: "{{ _sv_name }}"
+    host_id: "{{ _sv_host_id }}"
+    template_id: "{{ _export_template_id | d('') }}"
+    datastore_id: "{{ _sv_cluster.image_ds_id }}"
+    vnet: "{{ _sv_cluster.vnet_name }}"
+    probe_state: "{{ _sv_state }}"
+    timeout: "{{ _sv_config.timeout | d(300) }}"
+    poll_interval: "{{ _sv_config.poll_interval | d(5) }}"
+  become: true
+  become_user: oneadmin
+  register: _sv_probe
+  ignore_errors: true
+  ignore_unreachable: true
+  when: not _sv_blocked
+
+- name: Evaluate the disk operation
+  ansible.builtin.set_fact:
+    _sv_step_failed: "{{ _sv_probe is failed or _sv_probe is unreachable }}"
+
+- name: Record disk operation outcome
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ _sv_label }} {{ _sv_checks[_sv_step] }}"
+    result_value: "{{ ('skipped - ' ~ _sv_blocked) if _sv_blocked else ('failed' if _sv_step_failed else 'ok') }}"
+    result_comment: "{{ _sv_probe.msg | d('') if _sv_step_failed else '' }}"
+
+- name: Save confirmed disk identity or the reason subsequent steps cannot run
+  ansible.builtin.set_fact:
+    _sv_state: "{{ _sv_probe.probe_state | d(_sv_state) }}"
+    _sv_blocked: "{{ (_sv_checks[_sv_step] ~ ' did not complete') if _sv_step_failed else _sv_blocked }}"

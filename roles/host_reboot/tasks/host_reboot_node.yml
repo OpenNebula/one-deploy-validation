@@ -37,6 +37,19 @@
     - fe_colocated_check.rc | d(1) == 0
     - _hr_known_frontend_matches | length > 0
 
+- name: Report storage persistence skipped by frontend placement guard
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ _sv_label }} host reboot persistence"
+    result_value: >-
+      {{ 'skipped - frontend placement could not be verified' if fe_colocated_check.rc | d(1) != 0
+         else 'skipped - hypervisor hosts an OpenNebula frontend' }}
+  when:
+    - _hr_storage_eligible | bool
+    - fe_colocated_check.rc | d(1) != 0 or (not _hr_allow_frontend_shutdown and _hr_known_frontend_matches | length > 0)
+
 - name: "Host reboot verification harness for {{ selected_node }}"
   when:
     - fe_colocated_check.rc | d(1) == 0
@@ -44,7 +57,10 @@
   block:
     - name: Initialize per-node reboot recovery state
       ansible.builtin.set_fact:
-        target_host_id: ''
+        target_host_id: "{{ _hr_registered_host.ID | d('') }}"
+        _hr_storage_started: false
+        _hr_storage_recovered: false
+        _hr_storage_cleaned: false
         _hr_frontends_to_restore: []
         _hr_frontends_restored: false
         _hr_host_offline_attempted: false
@@ -58,13 +74,6 @@
         that: (_hr_known_frontend_matches | difference(_hr_expected_domains)) | length == 0
         fail_msg: "Frontend placement changed on {{ selected_node }} after preflight."
       when: _hr_allow_frontend_shutdown
-
-    - name: "Resolve OpenNebula host ID for {{ selected_node }}"
-      ansible.builtin.set_fact:
-        target_host_id: >-
-          {%- set match = _hr_host_pool.stdout | d('') | from_json
-              | json_query("HOST_POOL.HOST[?NAME=='" ~ selected_node ~ "' || TEMPLATE.HOSTNAME=='" ~ selected_node ~ "'].ID | [0]") -%}
-          {{ match | d('') | string if match is not none else '' }}
 
     # Phase 1: Pre-Reboot Baselines & Isolation
     - name: "Capture pre-reboot boot_id from {{ selected_node }}"
@@ -94,20 +103,32 @@
 
     - name: Require an OpenNebula host ID in frontend shutdown mode
       ansible.builtin.assert:
-        that: target_host_id | length > 0
+        that: target_host_id | string | length > 0
       when: _hr_allow_frontend_shutdown
+
+    - name: Prepare the storage probe while the target still accepts deployments
+      when: _hr_storage_eligible | bool
+      block:
+        - name: Enable storage cleanup for this hypervisor
+          ansible.builtin.set_fact:
+            _hr_storage_started: true
+
+        - name: Seed the attached disk and shut down its guest
+          ansible.builtin.include_role:
+            name: storage_validation
+            tasks_from: before_host_reboot.yml
 
     - name: Mark the host for re-enable after the offline attempt
       ansible.builtin.set_fact:
         _hr_host_offline_attempted: true
-      when: target_host_id | length > 0
+      when: target_host_id | string | length > 0
 
     - name: "Set host {{ selected_node }} offline in OpenNebula"
       become: true
       become_user: oneadmin
       ansible.builtin.command: "onehost offline {{ target_host_id }}"
       register: _hr_offline
-      when: target_host_id | length > 0
+      when: target_host_id | string | length > 0
       failed_when: _hr_allow_frontend_shutdown and (_hr_offline.rc | d(1) != 0)
 
     - name: Confirm the OpenNebula host was taken offline
@@ -135,7 +156,7 @@
       delegate_to: "{{ selected_node }}"
       register: _hr_reboot
       failed_when: _hr_allow_frontend_shutdown and not (_hr_reboot.rebooted | d(false))
-      ignore_unreachable: "{{ _hr_allow_frontend_shutdown }}"
+      ignore_unreachable: "{{ _hr_allow_frontend_shutdown or (_hr_storage_eligible | bool) }}"
 
     - name: Require a reachable hypervisor after reboot
       ansible.builtin.assert:
@@ -274,7 +295,7 @@
       ansible.builtin.shell: |
         onehost enable "{{ target_host_id }}"
         onehost forceupdate "{{ target_host_id }}"
-      when: target_host_id | length > 0
+      when: target_host_id | string | length > 0
       failed_when: false
 
     - name: "Poll OpenNebula host monitoring state for {{ selected_node }} until MONITORED ('on')"
@@ -286,7 +307,7 @@
       until: host_monitored_check.stdout | d('') | trim in ['on', 'MONITORED']
       retries: "{{ validation.host_reboot.monitored_wait_retries }}"
       delay: "{{ validation.host_reboot.monitored_wait_delay }}"
-      when: target_host_id | length > 0
+      when: target_host_id | string | length > 0
       failed_when: false
 
     # Phase 5: Evaluation & Reporting
@@ -300,6 +321,11 @@
           }}
         _one_monitored: >-
           {{ (host_monitored_check.stdout | default('') | trim) in ['on', 'MONITORED'] }}
+
+    - name: Remember whether host recovery permits the storage check
+      ansible.builtin.set_fact:
+        _hr_storage_recovered: "{{ _boot_id_changed and _one_monitored }}"
+      when: _hr_storage_started
 
     - name: "Record: Kernel boot ID transition ({{ selected_node }})"
       ansible.builtin.include_role:
@@ -465,4 +491,10 @@
             result_key: "[{{ selected_node }}] OpenNebula host cleanup after reboot"
             result_value: failed
             result_comment: "{{ _hr_cleanup.stderr | d(_hr_cleanup.msg | d('Could not re-enable host'), true) }}"
-  ignore_unreachable: "{{ _hr_allow_frontend_shutdown }}"
+
+    - name: Verify and release the storage probe after host and frontend recovery
+      ansible.builtin.include_role:
+        name: storage_validation
+        tasks_from: after_host_reboot.yml
+      when: _hr_storage_started
+  ignore_unreachable: "{{ _hr_allow_frontend_shutdown or (_hr_storage_eligible | bool) }}"

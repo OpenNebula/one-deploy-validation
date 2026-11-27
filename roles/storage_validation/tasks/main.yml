@@ -1,0 +1,19 @@
+---
+- name: Report unavailable cluster discovery
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: Storage validation
+    result_value: skipped - cluster discovery unavailable
+  when: odv_discovery_failed | d(false)
+
+- name: Run storage validation once per selected cluster
+  ansible.builtin.include_tasks: per_cluster.yml
+  loop: "{{ one_clusters | d([]) }}"
+  loop_control:
+    loop_var: _sv_cluster
+    label: "{{ _sv_cluster.name }}"
+  when:
+    - not (odv_discovery_failed | d(false))
+    - not ansible_check_mode

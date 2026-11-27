@@ -128,6 +128,8 @@ Run just this test (the cluster discovery, cleanup sweep, and report generation 
 make I=inventory/<env>/hosts.yaml validation TAGS="host_reboot" ANSIBLE_ARGS="-e @playbooks/report_input_vars.yml"
 ```
 
+For a checksum check across the same hypervisor reboot, enable and select [storage validation](storage_validation.md) alongside this role.
+
 ## Report output
 
 Report keys recorded via `verification_result` (comments carry the error detail on failure):

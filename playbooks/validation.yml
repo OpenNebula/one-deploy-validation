@@ -87,6 +87,13 @@
         - validation.run_test_vm | d(true)
         - not (_gb_pre | bool)
 
+    - role: storage_validation
+      tags: [storage_validation]
+      when:
+        - validation.run_storage_validation | d(false) | bool
+        - not (_gb_pre | bool)
+        - inventory_hostname == groups[frontend_group | d('frontend')][0]
+
     - role: storage-benchmark
       tags: [storage_benchmark]
       when:

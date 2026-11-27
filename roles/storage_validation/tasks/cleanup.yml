@@ -1,0 +1,46 @@
+---
+- name: Release the disposable VM before deleting its persistent image
+  storage_probe:
+    operation: "cleanup_{{ item.type }}"
+    name: "{{ _sv_name }}"
+    timeout: "{{ _sv_config.timeout | d(300) }}"
+    poll_interval: "{{ _sv_config.poll_interval | d(5) }}"
+  loop:
+    - {type: vm, name: "{{ _sv_name }}"}
+    - {type: image, name: "{{ _sv_name }}-data"}
+  become: true
+  become_user: oneadmin
+  register: _sv_cleanup
+  ignore_errors: true
+  ignore_unreachable: true
+  when: _sv_registered
+
+- name: Collect cleanup failures and connection errors
+  ansible.builtin.set_fact:
+    _sv_cleanup_errors: >-
+      {{ (_sv_cleanup.results | select('failed') | list)
+         + (_sv_cleanup.results | select('unreachable') | list) }}
+
+- name: Record resources whose removal could not be confirmed
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_leftover.yml
+  vars:
+    leftover_type: "{{ cleanup.item.type }}"
+    leftover_name: "{{ cleanup.item.name }}"
+    leftover_role: storage_validation
+    leftover_detail: "{{ cleanup.msg }}"
+  loop: "{{ _sv_cleanup_errors }}"
+  loop_control:
+    loop_var: cleanup
+    label: "{{ cleanup.item.name }}"
+
+- name: Record storage cleanup separately from hot-detach
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ _sv_label }} cleanup"
+    result_value: "{{ ('ok' if not _sv_cleanup_errors else 'failed') if _sv_registered else 'skipped - no probe resources created' }}"
+    result_comment: >-
+      {{ _sv_cleanup_errors | map(attribute='msg') | join(', ') }}

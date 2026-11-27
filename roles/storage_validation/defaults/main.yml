@@ -1,0 +1,10 @@
+---
+_sv_config: "{{ validation.storage_validation | d({}) }}"
+_sv_market_name: "{{ _sv_config.market_name | d(validation.test_vm.vm.market_name | d('Alpine Linux 3.21')) }}"
+_sv_checks:
+  attach: disk hot-attach and seed
+  reboot: guest reboot persistence
+  redeploy: VM redeploy persistence
+  poweroff: graceful power-off before host reboot
+  resume: host reboot persistence
+  detach: disk hot-detach

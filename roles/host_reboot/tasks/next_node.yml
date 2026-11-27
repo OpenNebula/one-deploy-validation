@@ -1,7 +1,35 @@
 ---
+- name: Resolve the reboot target in the OpenNebula host pool
+  ansible.builtin.set_fact:
+    _hr_host_matches: >-
+      {%- set matches = [] -%}
+      {%- for h in ([_pool] if _pool is mapping else (_pool or [])) -%}
+        {%- if selected_node in [h.NAME, (h.TEMPLATE | d({})).HOSTNAME | d('')] -%}
+          {%- set _ = matches.append(h) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ matches }}
+  vars:
+    _pool: >-
+      {{ (_hr_host_pool.stdout | from_json).HOST_POOL.HOST | d([])
+         if _hr_host_pool.rc | d(1) == 0 else [] }}
+
+- name: Record the host persistence check as pending a verified reboot
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "{{ _sv_label }} host reboot persistence"
+    result_value: >-
+      {{ 'skipped - reboot sequence stopped' if _hr_stop_sequence
+         else ('skipped - host pool unavailable' if _hr_host_pool.rc | d(1) != 0
+         else ('skipped - target must resolve to one monitored KVM host in a selected cluster'
+         if not (_hr_storage_eligible | bool) else 'skipped - reboot did not reach storage verification')) }}
+  when: _hr_storage_selected
+
 - name: "Reboot {{ selected_node }} unless recovery stopped the sequence"
   ansible.builtin.include_tasks: host_reboot_node.yml
-  when: not _hr_stop_sequence
+  when: not _hr_stop_sequence and _hr_host_pool.rc | d(1) == 0
   vars:
     _hr_known_frontend_matches: >-
       {{ fe_colocated_check.stdout_lines | d([]) | intersect(_hr_frontends) | sort }}

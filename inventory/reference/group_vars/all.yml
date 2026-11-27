@@ -164,6 +164,14 @@ validation:
     ext_host: 'google.com'
     # skip_vnets: [storage-only-vlan, mgmt-vlan]  # vNET names to exclude from network tests
 
+  # Hot-attach, persistence and hot-detach on one KVM host per cluster.
+  # Select both storage_validation and host_reboot for physical reboot coverage.
+  run_storage_validation: false
+  # storage_validation:
+  #   market_name: Alpine Linux 3.21   # defaults to test_vm.vm.market_name
+  #   timeout: 300                    # seconds per state transition
+  #   poll_interval: 5
+
   # TEST CASE NAME: Storage Benchmark
   # DESCRIPTION: Instantiates a VM for running storage benchmark from it. The VM needs to
   # have public internet access to install dependencies. The VM's connected network can

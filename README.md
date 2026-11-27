@@ -20,6 +20,7 @@ supported options with defaults, examples, report output and cleanup behavior.
 | VM instantiation (template export, deploy, SSH) | [docs/test_vm](./docs/test_vm.md) | `validation.run_test_vm` | on | `test_vm` |
 | Core Services (systemd units, host cycle, datastores) | [docs/validation](./docs/validation.md) | `validation.run_core_services` | on | `core_services` |
 | Networking subsystem (per-vNet GW/DNS/external) | [docs/network_validation](./docs/network_validation.md) | `validation.networks_verification` | on | `network_validation` |
+| Storage disk hot-attach, persistence, and hot-detach | [docs/storage_validation](./docs/storage_validation.md) | `validation.run_storage_validation` | off | `storage_validation` |
 | Storage benchmark (fio in a test VM) | [docs/storage-benchmark](./docs/storage-benchmark.md) | `validation.run_storage_benchmark` | on | `storage_benchmark` |
 | Network benchmark (host-to-host throughput) | [docs/network-benchmark](./docs/network-benchmark.md) | `validation.run_network_benchmark` | on | `network_benchmark` |
 | DPDK PCI allowlist (inventory/runtime/persistence) | [docs/dpdk-validation](./docs/dpdk-validation.md) | `validation.run_dpdk_pci_allowlist` | off | `dpdk_pci_allowlist` |

@@ -1,76 +1,207 @@
 ---
-- name: Host reboot skipped because cluster discovery failed
+- name: "Host reboot validation: skip - cluster discovery failed"
   ansible.builtin.include_role:
     name: validation_common
     tasks_from: record_result.yml
-    apply:
-      tags: [host_reboot]
   vars:
-    result_key: "Host reboot: monitoring recovery"
+    result_key: "Host reboot validation"
     result_value: "skipped - cluster discovery failed"
-  when: odv_discovery_failed | d(false)
+  when:
+    - validation.run_host_reboot | d(false)
+    - hostvars[groups[frontend_group | d('frontend')][0]].odv_discovery_failed | d(false)
 
-- name: Initialize host reboot validation
-  ansible.builtin.set_fact:
-    _hr_config: "{{ _host_reboot_defaults | combine(validation.host_reboot | d({})) }}"
-    host_reboot_failed: false
-    _hr_node_hostnames: >-
-      {%- set names = {} -%}
-      {%- for node in groups[node_group | d('node')] | d([]) -%}
-        {%- set _ = names.update({node: hostvars[node].hostname_cmd | d('')}) -%}
-      {%- endfor -%}
-      {{ names }}
-  when: not (odv_discovery_failed | d(false))
-
-- name: Check host reboot configuration
-  ansible.builtin.set_fact:
-    _hr_config_valid: >-
-      {{ (_hr_config.reboot_timeout | int) > 0
-         and (_hr_config.monitoring_timeout | int) > 0
-         and (_hr_config.poll_interval | int) > 0 }}
-  when: not (odv_discovery_failed | d(false))
-
-- name: Record invalid host reboot configuration
-  ansible.builtin.include_role:
-    name: validation_common
-    tasks_from: record_result.yml
-    apply:
-      tags: [host_reboot]
+- name: Initialize host reboot validation logic
+  when:
+    - validation.run_host_reboot | d(false)
+    - not (hostvars[groups[frontend_group | d('frontend')][0]].odv_discovery_failed | d(false))
+    - inventory_hostname == groups[frontend_group | d('frontend')][0]
   vars:
-    result_key: "Host reboot: monitoring recovery"
-    result_value: "failed"
-    result_comment: "reboot_timeout, monitoring_timeout and poll_interval must be positive seconds"
-  when:
-    - not (odv_discovery_failed | d(false))
-    - not (_hr_config_valid | bool)
+    _hr_allow_frontend_shutdown: "{{ validation.host_reboot.allow_frontend_shutdown | d(false) | bool }}"
+    _hr_frontends: "{{ groups[frontend_group | d('frontend')] }}"
+  block:
+    - name: Parse user target preference
+      ansible.builtin.set_fact:
+        _hr_target_preference: >-
+          {%- set raw = validation.host_reboot.target_nodes | d('all') -%}
+          {%- if raw == 'all' or raw == ['all'] or raw == '' or raw == [] -%}
+            {{ groups[node_group | d('node')] | default([]) }}
+          {%- elif raw is string -%}
+            {{ raw.split(',') | map('trim') | reject('equalto', '') | list }}
+          {%- elif raw is sequence -%}
+            {{ raw }}
+          {%- else -%}
+            []
+          {%- endif -%}
 
-- name: Stop disruptive tests after invalid host reboot configuration
-  ansible.builtin.set_fact:
-    host_reboot_failed: true
-  when:
-    - not (odv_discovery_failed | d(false))
-    - not (_hr_config_valid | bool)
+    - name: Initialize reboot sequence
+      ansible.builtin.set_fact:
+        _hr_stop_sequence: false
 
-- name: Read current OpenNebula host pool
-  ansible.builtin.command: onehost list -j
-  become: true
-  become_user: oneadmin
-  register: _hr_host_pool
-  changed_when: false
-  failed_when: false
-  when:
-    - not (odv_discovery_failed | d(false))
-    - _hr_config_valid | bool
+    - name: Validate frontend reboot inventory before rebooting any host
+      when:
+        - _hr_allow_frontend_shutdown
+        - not ansible_check_mode
+        - _hr_target_preference | length > 0
+      block:
+        - name: Validate reboot targets
+          ansible.builtin.assert:
+            that: (_hr_target_preference | difference(groups[node_group | d('node')] | d([]))) | length == 0
+            fail_msg: "Every reboot target must belong to the hypervisor inventory group."
 
-- name: Validate one reboot per cluster
-  ansible.builtin.include_tasks: per_cluster.yml
-  args:
-    apply:
-      tags: [host_reboot]
-  loop: "{{ one_clusters | d([]) }}"
-  loop_control:
-    loop_var: hr_cluster
-    label: "{{ hr_cluster.name }}"
-  when:
-    - not (odv_discovery_failed | d(false))
-    - _hr_config_valid | bool
+        - name: Check that reboot targets and frontends use remote connections
+          ansible.builtin.assert:
+            that:
+              - hostvars[item].ansible_connection | d('ssh') != 'local'
+            fail_msg: "Run from an independent Ansible controller with remote access to {{ item }}."
+          loop: "{{ (_hr_target_preference + _hr_frontends) | unique | list }}"
+
+        - name: Read boot IDs of the frontends and reboot targets
+          ansible.builtin.slurp:
+            src: /proc/sys/kernel/random/boot_id
+          delegate_to: "{{ item }}"
+          register: _hr_remote_boot_ids
+          ignore_unreachable: true
+          loop: "{{ (_hr_target_preference + _hr_frontends) | unique | list }}"
+
+        - name: Verify the controller is outside the systems under test
+          ansible.builtin.assert:
+            that:
+              - item.content | d('') | length > 0
+              - (item.content | b64decode | trim) != lookup('ansible.builtin.file', '/proc/sys/kernel/random/boot_id')
+            fail_msg: "Run from an independent controller that can reach {{ item.item }}."
+          loop: "{{ _hr_remote_boot_ids.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Verify frontends and reboot targets run in different guests or hosts
+          vars:
+            _hr_target_boot_ids: >-
+              {{ _hr_remote_boot_ids.results | selectattr('item', 'in', _hr_target_preference)
+                 | map(attribute='content') | list }}
+          ansible.builtin.assert:
+            that: item.content not in _hr_target_boot_ids
+            fail_msg: "Frontend {{ item.item }} runs directly on a reboot target."
+          loop: "{{ _hr_remote_boot_ids.results | selectattr('item', 'in', _hr_frontends) | list }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Inventory libvirt domains across the hypervisors
+          ansible.builtin.command: virsh list --all --name
+          delegate_to: "{{ item }}"
+          register: _hr_domain_inventory
+          changed_when: false
+          ignore_unreachable: true
+          loop: "{{ groups[node_group | d('node')] }}"
+
+        - name: Check that every hypervisor answered the libvirt query
+          ansible.builtin.assert:
+            that:
+              - item.rc | d(1) == 0
+          loop: "{{ _hr_domain_inventory.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Check for ambiguous frontend domain names
+          ansible.builtin.assert:
+            that:
+              - _hr_domain_inventory.results | map(attribute='stdout_lines') | flatten | select('equalto', item) | length <= 1
+            fail_msg: "Frontend domain {{ item }} is defined on multiple hypervisors."
+          loop: "{{ _hr_frontends }}"
+
+        - name: Validate service configuration for frontend VMs on reboot targets
+          vars:
+            _hr_target_domains: >-
+              {{ _hr_domain_inventory.results | selectattr('item', 'in', _hr_target_preference)
+                 | map(attribute='stdout_lines') | flatten }}
+            _hr_frontend_services_to_check: "{{ validation.core_services.service_list | d([]) }}"
+          when: _hr_target_domains | intersect(_hr_frontends) | length > 0
+          block:
+            - name: Require a frontend core service list
+              ansible.builtin.assert:
+                that: _hr_frontend_services_to_check | length > 0
+                fail_msg: "Configure validation.core_services.service_list for frontend recovery."
+
+            - name: Validate configured frontend service unit names
+              ansible.builtin.assert:
+                that:
+                  - item is mapping
+                  - item.name is string and item.name | trim | length > 0
+              loop: "{{ _hr_frontend_services_to_check }}"
+
+      rescue:
+        - name: Stop reboot sequence after failed frontend preflight
+          ansible.builtin.set_fact:
+            _hr_stop_sequence: true
+
+        - name: Record frontend reboot preflight failure
+          ansible.builtin.include_role:
+            name: validation_common
+            tasks_from: record_failure.yml
+          vars:
+            failure_key: "Frontend reboot preflight"
+
+    - name: Read current OpenNebula host pool
+      ansible.builtin.command: onehost list -j
+      become: true
+      become_user: oneadmin
+      register: _hr_host_pool
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+      when:
+        - not _hr_stop_sequence
+        - not ansible_check_mode
+
+    - name: Record failure if OpenNebula API is unresponsive
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Host reboot validation"
+        result_value: "failed"
+        result_comment: "Failed to read onehost pool from frontend"
+      when: not ansible_check_mode and not _hr_stop_sequence and (_hr_host_pool.rc | d(1) != 0)
+
+    - name: "Record skip if no target nodes found"
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "Host reboot validation"
+        result_value: "skipped — no target nodes found in inventory"
+      when:
+        - _hr_host_pool.rc | d(1) == 0
+        - (_hr_target_preference | length) == 0
+
+    - name: Run sequential reboot verification across target hypervisors
+      ansible.builtin.include_tasks: next_node.yml
+      loop: "{{ _hr_target_preference }}"
+      loop_control:
+        loop_var: selected_node
+        label: "{{ selected_node }}"
+      when:
+        - _hr_host_pool.rc | d(1) == 0
+        - (_hr_target_preference | length) > 0
+        - not ansible_check_mode
+
+    - name: Record aggregate host reboot validation result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        _failed_checks: >-
+          {{
+            (verification_result | default({})) | dict2items
+            | rejectattr('key', 'equalto', 'Host reboot validation')
+            | selectattr('key', 'search', 'reboot|re-monitoring|System journal')
+            | selectattr('value', 'string')
+            | selectattr('value', 'search', 'failed|error')
+            | map(attribute='key') | list
+          }}
+        result_key: "Host reboot validation"
+        result_value: "{{ 'failed' if (_hr_stop_sequence or _failed_checks | length > 0) else 'ok' }}"
+        result_comment: "{{ '' if (_failed_checks | length == 0) else ('Failed checks: ' ~ (_failed_checks | join(', '))) }}"
+      when:
+        - _hr_stop_sequence or _hr_host_pool.rc | d(1) == 0
+        - (_hr_target_preference | length) > 0
+        - not ansible_check_mode

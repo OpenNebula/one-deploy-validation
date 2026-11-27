@@ -1,0 +1,207 @@
+---
+- name: Define disposable VM identity
+  ansible.builtin.set_fact:
+    _dvc_vm_name: "odv-dpdk-{{ _dvc_run_id }}-{{ dvc_host.id }}"
+    _dvc_key_path: "/tmp/odv-dpdk-key-{{ _dvc_run_id }}-{{ dvc_host.id }}"
+
+- name: Generate temporary SSH key on RAFT leader
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -q
+      - -t
+      - ed25519
+      - -N
+      - ''
+      - -f
+      - "{{ _dvc_key_path }}"
+    creates: "{{ _dvc_key_path }}"
+  become: true
+  become_user: root
+  no_log: true
+
+- name: Read temporary SSH public key
+  ansible.builtin.slurp:
+    src: "{{ _dvc_key_path }}.pub"
+  become: true
+  become_user: root
+  register: _dvc_pubkey
+  no_log: true
+
+- name: Discover native HugePage size
+  ansible.builtin.shell: >-
+    awk '/^Hugepagesize:/ {print int($2/1024); exit}' /proc/meminfo
+  delegate_to: "{{ dvc_host.name }}"
+  become: true
+  become_user: root
+  register: _dvc_hugepage
+  changed_when: false
+
+- name: Validate HugePage size and VM memory
+  ansible.builtin.assert:
+    that:
+      - (_dvc_hugepage.stdout | int) > 0
+      - (_dvc_cfg.memory_mb | int) % (_dvc_hugepage.stdout | int) == 0
+
+- name: Refuse existing VM name collision
+  ansible.builtin.command:
+    argv:
+      - onevm
+      - list
+      - --csv
+      - -l
+      - ID
+      - --filter
+      - "NAME={{ _dvc_vm_name }}"
+      - --no-header
+  become: true
+  become_user: oneadmin
+  register: _dvc_preexisting
+  changed_when: false
+  failed_when: >-
+    _dvc_preexisting.rc != 0 or
+    (_dvc_preexisting.stdout | trim | length) > 0
+
+- name: Register temporary VM in cleanup manifest
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: manifest_add.yml
+  vars:
+    manifest_type: vm
+    manifest_id: ''
+    manifest_name: "{{ _dvc_vm_name }}"
+    manifest_cluster: "{{ _dvc_plan.cluster_id }}"
+    manifest_role: dpdk-vhost-connectivity-validation
+    manifest_disposition: created
+
+- name: Build shared-memory HugePage VM configuration
+  ansible.builtin.set_fact:
+    _dvc_vm_raw: |-
+      CPU="{{ _dvc_cfg.vcpu }}"
+      VCPU="{{ _dvc_cfg.vcpu }}"
+      MEMORY="{{ _dvc_cfg.memory_mb }}"
+      SCHED_REQUIREMENTS="HYPERVISOR=kvm & ID = {{ dvc_host.id }}"
+      TOPOLOGY=[SOCKETS="1", CORES="{{ _dvc_cfg.vcpu }}", THREADS="1", HUGEPAGE_SIZE="{{ _dvc_hugepage.stdout | trim }}", MEMORY_ACCESS="shared"]
+      CONTEXT=[SSH_PUBLIC_KEY={{ (_dvc_pubkey.content | b64decode | trim) | to_json }}, NETWORK="YES"]
+  no_log: true
+
+- name: Instantiate DPDK test VM
+  ansible.builtin.command:
+    argv:
+      - onetemplate
+      - instantiate
+      - "{{ _export_template_id }}"
+      - --nic
+      - "{{ _dvc_vnet.name }}"
+      - --name
+      - "{{ _dvc_vm_name }}"
+      - --raw
+      - "{{ _dvc_vm_raw }}"
+  become: true
+  become_user: oneadmin
+  register: _dvc_instantiate
+
+- name: Extract temporary VM ID
+  ansible.builtin.set_fact:
+    _dvc_vm_id: "{{ _dvc_instantiate.stdout.split(':')[-1] | trim }}"
+
+- name: Validate temporary VM ID
+  ansible.builtin.assert:
+    that:
+      - "(_dvc_vm_id | string) is match('^[0-9]+$')"
+
+- name: Wait for VM to enter RUNNING
+  ansible.builtin.command:
+    argv:
+      - onevm
+      - list
+      - --f
+      - "ID={{ _dvc_vm_id }}"
+      - -l
+      - STAT
+      - --no-header
+  become: true
+  become_user: oneadmin
+  register: _dvc_vm_state
+  changed_when: false
+  until: (_dvc_vm_state.stdout | trim) == 'runn'
+  retries: "{{ _dvc_cfg.vm_running_retries | int }}"
+  delay: "{{ _dvc_cfg.vm_running_delay | int }}"
+
+- name: Read full OpenNebula VM information
+  ansible.builtin.command:
+    argv:
+      - onevm
+      - show
+      - "{{ _dvc_vm_id }}"
+      - -j
+  become: true
+  become_user: oneadmin
+  register: _dvc_vm_details
+  changed_when: false
+
+- name: Extract VM deployment history
+  ansible.builtin.set_fact:
+    _dvc_vm_history: >-
+      {{
+        (
+          (_dvc_vm_details.stdout | from_json).VM.HISTORY_RECORDS
+          | d({})
+        ).HISTORY | d([])
+      }}
+
+- name: Extract actual OpenNebula host ID
+  ansible.builtin.set_fact:
+    _dvc_actual_hid: >-
+      {{
+        (_dvc_vm_history[-1].HID | d(''))
+        if (
+          _dvc_vm_history is sequence
+          and _dvc_vm_history is not mapping
+          and _dvc_vm_history is not string
+          and (_dvc_vm_history | length > 0)
+        )
+        else (_dvc_vm_history.HID | d(''))
+      }}
+
+- name: Verify VM placement by OpenNebula host ID
+  ansible.builtin.assert:
+    that:
+      - "(_dvc_actual_hid | string) == (dvc_host.id | string)"
+    fail_msg: >-
+      VM {{ _dvc_vm_id }} placement mismatch:
+      expected host={{ dvc_host.name }} (ID={{ dvc_host.id }}),
+      actual host ID={{ _dvc_actual_hid }}.
+
+- name: Discover OpenNebula-allocated IPv4
+  ansible.builtin.command:
+    argv:
+      - onevm
+      - list
+      - --f
+      - "ID={{ _dvc_vm_id }}"
+      - -l
+      - IP
+      - --no-header
+  become: true
+  become_user: oneadmin
+  register: _dvc_vm_ip
+  changed_when: false
+
+- name: Verify allocated IPv4
+  ansible.builtin.assert:
+    that:
+      - "(_dvc_vm_ip.stdout | trim) is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')"
+
+- name: Register VM for traffic testing
+  ansible.builtin.set_fact:
+    _dvc_vms: >-
+      {{
+        _dvc_vms + [{
+          'name': _dvc_vm_name,
+          'id': _dvc_vm_id,
+          'ip': _dvc_vm_ip.stdout | trim,
+          'host': dvc_host.name,
+          'key': _dvc_key_path
+        }]
+      }}

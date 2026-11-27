@@ -1,0 +1,7 @@
+---
+- name: "Reboot {{ selected_node }} unless recovery stopped the sequence"
+  ansible.builtin.include_tasks: host_reboot_node.yml
+  when: not _hr_stop_sequence
+  vars:
+    _hr_known_frontend_matches: >-
+      {{ fe_colocated_check.stdout_lines | d([]) | intersect(_hr_frontends) | sort }}

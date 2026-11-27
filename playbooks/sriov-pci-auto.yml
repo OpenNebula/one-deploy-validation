@@ -1,0 +1,211 @@
+---
+- name: Resolve leader
+  tags: [sriov_pci_passthrough]
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    odv_raft_excluded_frontends: "{{ (validation | d({})).get('sriov_pci_passthrough', {}).get('excluded_frontends', []) }}"
+  tasks:
+    - name: Resolve current RAFT leader
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: resolve_raft_leader.yml
+
+    - name: Register execution leader
+      ansible.builtin.add_host:
+        name: "{{ odv_raft_leader }}"
+        groups: odv_sriov_execution_leader
+        ansible_connection: ssh
+        ansible_user: "{{ odv_raft_ssh_user | default('root') }}"
+        ansible_become: false
+
+- name: Discover KVM inventory
+  tags: [sriov_pci_passthrough]
+  hosts: odv_sriov_execution_leader
+  gather_facts: false
+  become: false
+  vars:
+    odv_sriov_excluded_hosts: "{{ (validation | d({})).get('sriov_pci_passthrough', {}).get('excluded_hosts', []) }}"
+  tasks:
+    - name: Read OpenNebula host pool
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - -iu
+          - oneadmin
+          - onehost
+          - list
+          - -j
+      register: _host_pool
+      changed_when: false
+      no_log: true
+
+    - name: Parse host pool
+      no_log: true
+      ansible.builtin.set_fact:
+        _hosts: >-
+          {{ (_host_pool.stdout | from_json).HOST_POOL.HOST
+             | default([]) }}
+
+    - name: Register monitored KVM hosts for inspection
+      no_log: true
+      ansible.builtin.add_host:
+        name: "{{ item.NAME }}"
+        groups: odv_sriov_scan_hosts
+        odv_spv_host_id: "{{ item.ID }}"
+        odv_spv_one_pci: >-
+          {{ ((item.HOST_SHARE | default({})).PCI_DEVICES
+              | default({})).PCI | default([]) }}
+      loop: "{{ _hosts if _hosts is sequence and _hosts is not mapping else [_hosts] }}"
+      loop_control:
+        label: "{{ item.NAME }}"
+      when:
+        - item.NAME not in (odv_sriov_excluded_hosts | default([]))
+        - (item.VM_MAD | default('')) == 'kvm'
+        - (item.STATE | string) == '2'
+
+- name: Inspect SR-IOV VFs on candidate KVM hosts
+  tags: [sriov_pci_passthrough]
+  hosts: odv_sriov_scan_hosts
+  gather_facts: false
+  become: true
+  become_user: root
+
+  tasks:
+    - name: Run read-only VF discovery
+      block:
+        - name: Stage temporary scanner
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../roles/sriov-pci-passthrough-validation/files/discover_vfs.py"
+            dest: /tmp/odv-sriov-discover-vfs.py
+            mode: "0700"
+
+        - name: Inspect VF eligibility
+          ansible.builtin.command:
+            argv:
+              - python3
+              - /tmp/odv-sriov-discover-vfs.py
+            stdin: >-
+              {{
+                {
+                  'host': inventory_hostname,
+                  'host_id': odv_spv_host_id,
+                  'pci': odv_spv_one_pci
+                } | to_json
+              }}
+          register: _vf_discovery_raw
+          changed_when: false
+
+        - name: Display VF eligibility summary
+          ansible.builtin.debug:
+            msg:
+              host: "{{ inventory_hostname }}"
+              discovery: "{{ _vf_discovery_raw.stdout | from_json }}"
+
+      always:
+        - name: Remove temporary scanner
+          ansible.builtin.file:
+            path: /tmp/odv-sriov-discover-vfs.py
+            state: absent
+
+- name: Validate discovered SR-IOV VFs on the elected leader
+  tags: [sriov_pci_passthrough]
+  hosts: odv_sriov_execution_leader
+  gather_facts: false
+  become: false
+  vars:
+    odv_sriov_excluded_hosts: "{{ (validation | d({})).get('sriov_pci_passthrough', {}).get('excluded_hosts', []) }}"
+    odv_spv_live_execute: "{{ (validation | d({})).get('run_sriov_pci_passthrough_validation', false) | bool }}"
+    odv_spv_template_id: "{{ (validation | d({})).get('sriov_pci_passthrough', {}).get('template_id', '') }}"
+  tasks:
+    - name: Record absence of monitored KVM hosts
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: SR-IOV PCI auto-discovery
+        result_value: "skipped — no monitored KVM hosts"
+      when: groups['odv_sriov_scan_hosts'] | default([]) | length == 0
+
+    - name: Fail if any KVM host lacks a successful safety scan
+      ansible.builtin.assert:
+        that:
+          - hostvars[item]._vf_discovery_raw is defined
+          - (hostvars[item]._vf_discovery_raw.rc | default(1)) == 0
+          - ((hostvars[item]._vf_discovery_raw.stdout | from_json).errors | length) == 0
+      loop: "{{ groups['odv_sriov_scan_hosts'] | default([]) }}"
+
+    - name: Collect one eligible VF per PF across hosts
+      ansible.builtin.set_fact:
+        _spv_auto_targets: >-
+          {%- set targets = [] -%}
+          {%- for h in groups['odv_sriov_scan_hosts'] | default([]) -%}
+            {%- for vf in (hostvars[h]._vf_discovery_raw.stdout | from_json).selected -%}
+              {%- set _ = targets.append({
+                'host': h,
+                'host_id': vf.host_id | int,
+                'pf': vf.pf,
+                'vf_full': vf.vf,
+                'vf': vf.vf[-7:]
+              }) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ targets }}
+
+    - name: Enforce live test and host exclusion guards
+      ansible.builtin.assert:
+        that:
+          - odv_spv_live_execute | default(false) | bool
+          - (_spv_auto_targets | selectattr('host', 'in', odv_sriov_excluded_hosts) | list | length) == 0
+        fail_msg: 'Live deployment disabled or a decommissioned host was selected'
+
+    - name: Show selected live targets
+      ansible.builtin.debug:
+        msg:
+          leader: "{{ inventory_hostname }}"
+          targets: "{{ _spv_auto_targets }}"
+          excluded_hosts: "{{ odv_sriov_excluded_hosts }}"
+
+    - name: Record skipped and eligible hosts
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        _host_scan: "{{ hostvars[item]._vf_discovery_raw.stdout | from_json }}"
+        result_key: "SR-IOV PCI auto-discovery ({{ item }})"
+        result_value: "{{ 'ok' if (_host_scan.selected | length > 0) else 'skipped — no safe free VFs' }}"
+        result_comment: >-
+          {{ (_host_scan.vf_checks | map(attribute='reasons')
+              | flatten | unique | list | join('; '))[:800] }}
+      loop: "{{ groups['odv_sriov_scan_hosts'] | default([]) }}"
+
+    - name: Deploy, validate and clean one test VM per selected PF
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/sriov-pci-auto-per-vf.yml"
+      loop: "{{ _spv_auto_targets }}"
+      loop_control:
+        loop_var: spv_target
+        label: "{{ spv_target.host }} PF={{ spv_target.pf }} VF={{ spv_target.vf_full }}"
+
+    - name: Fail if any VF validation failed or left resources behind
+      ansible.builtin.assert:
+        that:
+          - "'failed' not in ((verification_result | default({})).values() | list)"
+          - (odv_leftovers | default([]) | length) == 0
+
+    - name: Print final validation and cleanup results
+      ansible.builtin.debug:
+        msg:
+          leader: "{{ inventory_hostname }}"
+          targets: "{{ _spv_auto_targets }}"
+          results: "{{ verification_result | default({}) }}"
+          leftovers: "{{ odv_leftovers | default([]) }}"
+
+    - name: Save results to controller /tmp
+      ansible.builtin.copy:
+        dest: /tmp/odv-sriov-auto-live-summary.json
+        mode: '0600'
+        content: "{{ {'leader': inventory_hostname, 'targets': _spv_auto_targets, 'results': verification_result | default({}), 'comments': verification_comments | default({}), 'leftovers': odv_leftovers | default([])} | to_nice_json }}"
+      delegate_to: localhost
+      become: false

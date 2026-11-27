@@ -1,0 +1,42 @@
+---
+- name: Wait for the hypervisor before restoring frontend VMs
+  ansible.builtin.wait_for_connection:
+    connect_timeout: "{{ validation.host_reboot.connect_timeout }}"
+    timeout: "{{ validation.host_reboot.reboot_timeout }}"
+  delegate_to: "{{ selected_node }}"
+  register: _hr_hypervisor_connection
+  ignore_errors: true
+  ignore_unreachable: true
+
+- name: Restore frontend VMs that libvirt did not autostart
+  ansible.builtin.shell: |
+    domain={{ _hr_frontend | quote }}
+    state=$(virsh domstate "$domain") || exit $?
+    case "$state" in
+      running|blocked) ;;
+      'shut off') virsh start "$domain" || exit $?; echo started ;;
+      *) printf 'Unexpected domain state: %s\n' "$state" >&2; exit 1 ;;
+    esac
+  environment:
+    LC_ALL: C
+  delegate_to: "{{ selected_node }}"
+  loop: "{{ _hr_frontends_to_restore }}"
+  loop_control:
+    loop_var: _hr_frontend
+    label: "{{ _hr_frontend }}"
+  register: _hr_frontend_starts
+  changed_when: "'started' in _hr_frontend_starts.stdout_lines | d([])"
+  failed_when: false
+  ignore_unreachable: true
+  when: _hr_hypervisor_connection is succeeded and _hr_hypervisor_connection is reachable
+
+- name: Initialize frontend recovery result
+  ansible.builtin.set_fact:
+    _hr_frontends_restored: true
+
+- name: Verify each frontend after VM recovery
+  ansible.builtin.include_tasks: verify_frontend.yml
+  loop: "{{ _hr_frontend_starts.results }}"
+  loop_control:
+    loop_var: _hr_start
+    label: "{{ _hr_start._hr_frontend }}"

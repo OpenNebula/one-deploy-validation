@@ -1,0 +1,108 @@
+---
+- name: Wait for SSH from RAFT leader to source VM
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ dvc_leg.0.key }}"
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=7
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - "root@{{ dvc_leg.0.ip }}"
+      - 'true'
+  become: true
+  become_user: root
+  register: _dvc_ssh_ready
+  changed_when: false
+  failed_when: false
+  until: (_dvc_ssh_ready.rc | d(1)) == 0
+  retries: "{{ _dvc_cfg.ssh_retries | int }}"
+  delay: "{{ _dvc_cfg.ssh_delay | int }}"
+
+- name: Ping destination VM from source VM via RAFT leader
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ dvc_leg.0.key }}"
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=7
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - "root@{{ dvc_leg.0.ip }}"
+      - ping
+      - -n
+      - -c
+      - "{{ _dvc_cfg.ping_count | string }}"
+      - -W
+      - '2'
+      - "{{ dvc_leg.1.ip }}"
+  become: true
+  become_user: root
+  register: _dvc_ping
+  changed_when: false
+  failed_when: false
+  when: (_dvc_ssh_ready.rc | d(1)) == 0
+
+- name: Interpret SSH and ICMP results separately
+  ansible.builtin.set_fact:
+    _dvc_loss: >-
+      {{
+        _dvc_ping.stdout | d('')
+        | regex_findall('([0-9.]+)% packet loss')
+        | first | d('not measured')
+      }}
+    _dvc_leg_status: >-
+      {{
+        'ssh_failed'
+        if (_dvc_ssh_ready.rc | d(1)) != 0
+        else (
+          'ok'
+          if (_dvc_ping.rc | d(1)) == 0
+             and (
+               _dvc_ping.stdout | d('')
+               | regex_findall('([0-9.]+)% packet loss')
+               | first | d('unknown') | float(-1)
+             ) == 0
+          else 'icmp_failed'
+        )
+      }}
+
+- name: Record directed DPDK connectivity result
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: >-
+      DPDK/vhost-user connectivity
+      {{ dvc_leg.0.host }} -> {{ dvc_leg.1.host }}
+    result_value: "{{ 'ok' if _dvc_leg_status == 'ok' else 'failed' }}"
+    result_comment:
+      source_ip: "{{ dvc_leg.0.ip }}"
+      destination_ip: "{{ dvc_leg.1.ip }}"
+      ssh_initiator: "{{ inventory_hostname }}"
+      status: "{{ _dvc_leg_status }}"
+      ssh_error: "{{ (_dvc_ssh_ready.stderr | d(''))[-600:] }}"
+      packets: "{{ _dvc_cfg.ping_count }}"
+      loss_percent: "{{ _dvc_loss }}"
+      stdout: "{{ (_dvc_ping.stdout | d(''))[-1200:] }}"
+      stderr: "{{ (_dvc_ping.stderr | d(''))[-600:] }}"
+
+- name: Remember failed directed connectivity
+  ansible.builtin.set_fact:
+    _dvc_failed_legs: >-
+      {{
+        _dvc_failed_legs
+        + [dvc_leg.0.host ~ ' -> ' ~ dvc_leg.1.host
+           ~ ': ' ~ _dvc_leg_status]
+      }}
+  when: _dvc_leg_status != 'ok'

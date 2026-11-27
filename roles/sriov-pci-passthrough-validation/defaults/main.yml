@@ -1,0 +1,11 @@
+---
+sriov_pci_passthrough_defaults:
+  template_id: ''
+  targets: []
+
+  memory_mb: 1024
+  vcpu: 1
+
+  deploy_timeout: 300
+  cleanup_timeout: 180
+  poll_interval: 5

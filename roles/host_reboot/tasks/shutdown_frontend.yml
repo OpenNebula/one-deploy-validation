@@ -1,0 +1,32 @@
+---
+- name: "Track {{ _hr_frontend }} for recovery before requesting shutdown"
+  ansible.builtin.set_fact:
+    _hr_frontends_to_restore: "{{ _hr_frontends_to_restore + [_hr_frontend] }}"
+
+- name: "Request graceful shutdown of {{ _hr_frontend }}"
+  ansible.builtin.command:
+    argv: [virsh, shutdown, "{{ _hr_frontend }}"]
+  delegate_to: "{{ selected_node }}"
+  register: _hr_shutdown
+  ignore_unreachable: true
+
+- name: "Verify shutdown request reached {{ selected_node }}"
+  ansible.builtin.assert:
+    that: _hr_shutdown.rc | d(1) == 0
+
+- name: "Wait for {{ _hr_frontend }} to shut off"
+  ansible.builtin.command:
+    argv: [virsh, domstate, "{{ _hr_frontend }}"]
+  environment:
+    LC_ALL: C
+  delegate_to: "{{ selected_node }}"
+  register: _hr_domain_state
+  changed_when: false
+  ignore_unreachable: true
+  until: _hr_domain_state.rc | d(1) == 0 and _hr_domain_state.stdout | trim == 'shut off'
+  retries: "{{ validation.host_reboot.frontend_shutdown_retries | d(30) }}"
+  delay: "{{ validation.host_reboot.frontend_poll_delay | d(5) }}"
+
+- name: "Confirm {{ _hr_frontend }} is powered off"
+  ansible.builtin.assert:
+    that: _hr_domain_state.rc | d(1) == 0 and _hr_domain_state.stdout | trim == 'shut off'

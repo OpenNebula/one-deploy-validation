@@ -1,0 +1,73 @@
+---
+- name: "Wait for SSH on {{ _hr_start._hr_frontend }}"
+  ansible.builtin.wait_for_connection:
+    connect_timeout: "{{ validation.host_reboot.connect_timeout }}"
+    timeout: "{{ validation.host_reboot.reboot_timeout }}"
+  delegate_to: "{{ _hr_start._hr_frontend }}"
+  register: _hr_frontend_connection
+  ignore_errors: true
+  ignore_unreachable: true
+  when: _hr_start.rc | d(1) == 0
+
+- name: Evaluate frontend SSH recovery
+  ansible.builtin.set_fact:
+    _hr_frontend_online: >-
+      {{ _hr_frontend_connection is not skipped and
+         _hr_frontend_connection is succeeded and _hr_frontend_connection is reachable }}
+
+- name: Record frontend VM recovery
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "[{{ _hr_start._hr_frontend }}] Frontend SSH after {{ selected_node }} reboot"
+    result_value: "{{ 'ok' if _hr_frontend_online else 'failed' }}"
+    result_comment: >-
+      {{ '' if _hr_frontend_online else
+         (_hr_start.stderr | d('', true) | trim or
+          _hr_frontend_connection.msg | d(_hr_hypervisor_connection.msg | d('Frontend SSH unavailable'))) }}
+
+- name: Mark frontend recovery incomplete when SSH is unavailable
+  ansible.builtin.set_fact:
+    _hr_frontends_restored: false
+  when: not _hr_frontend_online
+
+- name: Check configured core services without starting or restarting them
+  ansible.builtin.systemd:
+    name: "{{ svc.name }}"
+  delegate_to: "{{ _hr_start._hr_frontend }}"
+  loop: "{{ validation.core_services.service_list }}"
+  loop_control:
+    loop_var: svc
+    label: "{{ svc.name }}"
+  register: _hr_frontend_services
+  until: _hr_frontend_services.status.ActiveState | d('') == 'active'
+  retries: "{{ validation.host_reboot.frontend_service_retries | d(30) }}"
+  delay: "{{ validation.host_reboot.frontend_poll_delay | d(5) }}"
+  ignore_errors: true
+  ignore_unreachable: true
+  when: _hr_frontend_online
+
+- name: Record each configured frontend service after reboot
+  ansible.builtin.include_role:
+    name: validation_common
+    tasks_from: record_result.yml
+  vars:
+    result_key: "[{{ _hr_start._hr_frontend }}] {{ item.svc.name }} active after {{ selected_node }} reboot"
+    result_value: "{{ 'ok' if item.status.ActiveState | d('') == 'active' else 'failed' }}"
+    result_comment: >-
+      {{ '' if result_value == 'ok' else
+         ('State: ' ~ (item.status.ActiveState | d('unknown')) ~
+          ', load: ' ~ (item.status.LoadState | d('unknown')) ~
+          '. ' ~ (item.msg | d('Frontend SSH unavailable' if not _hr_frontend_online else ''))) }}
+  loop: "{{ _hr_frontend_services.results }}"
+  loop_control:
+    label: "{{ item.svc.name }}"
+
+- name: Mark frontend recovery incomplete when a core service is missing or inactive
+  ansible.builtin.set_fact:
+    _hr_frontends_restored: false
+  when: item.status.ActiveState | d('') != 'active'
+  loop: "{{ _hr_frontend_services.results }}"
+  loop_control:
+    label: "{{ item.svc.name }}"

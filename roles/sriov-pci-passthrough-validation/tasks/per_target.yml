@@ -1,0 +1,145 @@
+---
+- name: Generate unique test VM name
+  ansible.builtin.set_fact:
+    _spv_vm_name: "odv-sriov-pci-{{ _spv_run_id }}-{{ spv_target_idx }}"
+
+- name: Initialize per-target result
+  ansible.builtin.set_fact:
+    _spv_result:
+      status: failed
+      checks: []
+
+- name: Validate SR-IOV VF on {{ spv_target.host | default('unknown') }}
+  block:
+
+    - name: Validate target parameters
+      ansible.builtin.assert:
+        that:
+          - spv_target is mapping
+          - (spv_target.host_id | default('') | string) is match('^[0-9]+$')
+          - (spv_target.host | default('') | string) is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - (spv_target.vf | default('') | string) is match('^(?:[0-9A-Fa-f]{4}:)?[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]$')
+
+    - name: Register test VM in cleanup manifest
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: manifest_add.yml
+      vars:
+        manifest_type: vm
+        manifest_id: ''
+        manifest_name: "{{ _spv_vm_name }}"
+        manifest_role: sriov-pci-passthrough-validation
+        manifest_disposition: created
+
+    - name: Execute host-side PCI passthrough probe
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ _spv_probe_path }}"
+          - --template-id
+          - "{{ _spv_cfg.template_id | string }}"
+          - --host-id
+          - "{{ spv_target.host_id | string }}"
+          - --host
+          - "{{ spv_target.host }}"
+          - --vf
+          - "{{ spv_target.vf }}"
+          - --vm-name
+          - "{{ _spv_vm_name }}"
+          - --memory
+          - "{{ _spv_cfg.memory_mb | string }}"
+          - --vcpu
+          - "{{ _spv_cfg.vcpu | string }}"
+          - --deploy-timeout
+          - "{{ _spv_cfg.deploy_timeout | string }}"
+          - --cleanup-timeout
+          - "{{ _spv_cfg.cleanup_timeout | string }}"
+          - --poll-interval
+          - "{{ _spv_cfg.poll_interval | string }}"
+      become: true
+      become_user: oneadmin
+      register: _spv_execution
+      changed_when: true
+      failed_when: false
+
+    - name: Decode PCI validation results
+      ansible.builtin.set_fact:
+        _spv_result: >-
+          {{
+            (_spv_execution.stdout | from_json)
+            if (
+              _spv_execution.rc | default(1) == 0
+              and (_spv_execution.stdout | default('') | trim).startswith('{')
+            )
+            else {
+              'status': 'failed',
+              'checks': [{
+                'name': 'probe',
+                'status': 'failed',
+                'detail': _spv_execution.stderr | default('Probe returned no valid result')
+              }]
+            }
+          }}
+
+    - name: Record individual validation results
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "SR-IOV PCI {{ item.name }} ({{ spv_target.host }} / {{ spv_target.vf }})"
+        result_value: "{{ item.status }}"
+        result_comment: "{{ item.detail | default('') }}"
+      loop: "{{ _spv_result.checks }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+  rescue:
+
+    - name: Record per-target failure
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_failure.yml
+      vars:
+        failure_key: "SR-IOV PCI passthrough ({{ spv_target.host | default('unknown') }})"
+
+  always:
+
+    - name: Ensure test VM is removed
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: terminate_vm_by_name.yml
+      vars:
+        tvbn_name: "{{ _spv_vm_name }}"
+        tvbn_role: sriov-pci-passthrough-validation
+
+    - name: Record VM cleanup result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "SR-IOV PCI cleanup ({{ spv_target.host | default('unknown') }})"
+        result_value: >-
+          {{
+            'ok'
+            if (_tvbn_survivors | default([]) | length == 0)
+            else 'failed'
+          }}
+
+    - name: Record final VF validation result
+      ansible.builtin.include_role:
+        name: validation_common
+        tasks_from: record_result.yml
+      vars:
+        result_key: "SR-IOV PCI passthrough ({{ spv_target.host | default('unknown') }} / {{ spv_target.vf | default('unknown') }})"
+        result_value: >-
+          {{
+            'failed'
+            if (_tvbn_survivors | default([]) | length > 0)
+            else _spv_result.status | default('failed')
+          }}
+        result_comment: >-
+          {{
+            'Cleanup survivors: ' ~ (_tvbn_survivors | join(', '))
+            if (_tvbn_survivors | default([]) | length > 0)
+            else ''
+          }}
